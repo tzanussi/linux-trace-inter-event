@@ -151,6 +151,12 @@ trace_event_buffer_lock_reserve(struct ring_buffer **current_buffer,
 				int type, unsigned long len,
 				unsigned long flags, int pc);
 
+struct ring_buffer_event *
+trace_event_buffer_lock_reserve_recursive(struct ring_buffer **current_buffer,
+					  struct trace_event_file *trace_file,
+					  int type, unsigned long len,
+					  unsigned long flags, int pc);
+
 #define TRACE_RECORD_CMDLINE	BIT(0)
 #define TRACE_RECORD_TGID	BIT(1)
 
@@ -209,6 +215,10 @@ struct trace_event_buffer {
 void *trace_event_buffer_reserve(struct trace_event_buffer *fbuffer,
 				  struct trace_event_file *trace_file,
 				  unsigned long len);
+
+void *trace_event_buffer_reserve_recursive(struct trace_event_buffer *fbuffer,
+					   struct trace_event_file *trace_file,
+					   unsigned long len);
 
 void trace_event_buffer_commit(struct trace_event_buffer *fbuffer);
 

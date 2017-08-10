@@ -2830,6 +2830,7 @@ rb_reserve_next_event(struct ring_buffer *buffer,
  * ring_buffer_lock_reserve - reserve a part of the buffer
  * @buffer: the ring buffer to reserve from
  * @length: the length of the data to reserve (excluding event header)
+ * @allow_recursion: flag allowing recursion check to be overridden
  *
  * Returns a reseverd event on the ring buffer to copy directly to.
  * The user of this interface will need to get the body to write into
@@ -2842,7 +2843,8 @@ rb_reserve_next_event(struct ring_buffer *buffer,
  * If NULL is returned, then nothing has been allocated or locked.
  */
 struct ring_buffer_event *
-ring_buffer_lock_reserve(struct ring_buffer *buffer, unsigned long length)
+ring_buffer_lock_reserve(struct ring_buffer *buffer, unsigned long length,
+			 bool allow_recursion)
 {
 	struct ring_buffer_per_cpu *cpu_buffer;
 	struct ring_buffer_event *event;
@@ -2867,8 +2869,10 @@ ring_buffer_lock_reserve(struct ring_buffer *buffer, unsigned long length)
 	if (unlikely(length > BUF_MAX_DATA_SIZE))
 		goto out;
 
-	if (unlikely(trace_recursive_lock(cpu_buffer)))
-		goto out;
+	if (unlikely(trace_recursive_lock(cpu_buffer))) {
+		if (!allow_recursion)
+			goto out;
+	}
 
 	event = rb_reserve_next_event(buffer, cpu_buffer, length);
 	if (!event)

@@ -113,7 +113,8 @@ int ring_buffer_resize(struct ring_buffer *buffer, unsigned long size, int cpu);
 void ring_buffer_change_overwrite(struct ring_buffer *buffer, int val);
 
 struct ring_buffer_event *ring_buffer_lock_reserve(struct ring_buffer *buffer,
-						   unsigned long length);
+						   unsigned long length,
+						   bool allow_recursion);
 int ring_buffer_unlock_commit(struct ring_buffer *buffer,
 			      struct ring_buffer_event *event);
 int ring_buffer_write(struct ring_buffer *buffer,

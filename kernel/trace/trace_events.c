@@ -249,9 +249,9 @@ bool trace_event_ignore_this_pid(struct trace_event_file *trace_file)
 }
 EXPORT_SYMBOL_GPL(trace_event_ignore_this_pid);
 
-void *trace_event_buffer_reserve(struct trace_event_buffer *fbuffer,
-				 struct trace_event_file *trace_file,
-				 unsigned long len)
+void *__trace_event_buffer_reserve(struct trace_event_buffer *fbuffer,
+				   struct trace_event_file *trace_file,
+				   unsigned long len, bool allow_recursion)
 {
 	struct trace_event_call *event_call = trace_file->event_call;
 
@@ -271,17 +271,38 @@ void *trace_event_buffer_reserve(struct trace_event_buffer *fbuffer,
 		fbuffer->pc--;
 	fbuffer->trace_file = trace_file;
 
-	fbuffer->event =
-		trace_event_buffer_lock_reserve(&fbuffer->buffer, trace_file,
-						event_call->event.type, len,
-						fbuffer->flags, fbuffer->pc);
+	if (!allow_recursion)
+		fbuffer->event =
+			trace_event_buffer_lock_reserve(&fbuffer->buffer, trace_file,
+							event_call->event.type, len,
+							fbuffer->flags, fbuffer->pc);
+	else
+		fbuffer->event =
+			trace_event_buffer_lock_reserve_recursive(&fbuffer->buffer, trace_file,
+								  event_call->event.type, len,
+								  fbuffer->flags, fbuffer->pc);
 	if (!fbuffer->event)
 		return NULL;
 
 	fbuffer->entry = ring_buffer_event_data(fbuffer->event);
 	return fbuffer->entry;
 }
+
+void *trace_event_buffer_reserve(struct trace_event_buffer *fbuffer,
+				 struct trace_event_file *trace_file,
+				 unsigned long len)
+{
+	return __trace_event_buffer_reserve(fbuffer, trace_file, len, false);
+}
 EXPORT_SYMBOL_GPL(trace_event_buffer_reserve);
+
+void *trace_event_buffer_reserve_recursive(struct trace_event_buffer *fbuffer,
+					   struct trace_event_file *trace_file,
+					   unsigned long len)
+{
+	return __trace_event_buffer_reserve(fbuffer, trace_file, len, true);
+}
+EXPORT_SYMBOL_GPL(trace_event_buffer_reserve_recursive);
 
 int trace_event_reg(struct trace_event_call *call,
 		    enum trace_reg type, void *data)

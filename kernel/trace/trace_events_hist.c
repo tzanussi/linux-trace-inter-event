@@ -674,8 +674,8 @@ static notrace void trace_event_raw_event_synth(void *__data,
 
 	fields_size = event->n_u64 * sizeof(u64);
 
-	entry = trace_event_buffer_reserve(&fbuffer, trace_file,
-					   sizeof(*entry) + fields_size);
+	entry = trace_event_buffer_reserve_recursive(&fbuffer, trace_file,
+						     sizeof(*entry) + fields_size);
 	if (!entry)
 		return;
 
