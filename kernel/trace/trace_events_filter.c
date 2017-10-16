@@ -23,6 +23,7 @@
 #include <linux/mutex.h>
 #include <linux/perf_event.h>
 #include <linux/slab.h>
+#include <linux/kernel.h>
 
 #include "trace.h"
 #include "trace_output.h"
@@ -2140,7 +2141,7 @@ static struct test_filter_data_t {
 #undef YES
 #undef NO
 
-#define DATA_CNT (sizeof(test_filter_data)/sizeof(struct test_filter_data_t))
+#define DATA_CNT ARRAY_SIZE(test_filter_data)
 
 static int test_pred_visited;
 
