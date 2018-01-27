@@ -21,8 +21,8 @@ struct func_arg {
 	long				indirect;
 	short				offset;
 	short				size;
-	char				arg;
-	char				sign;
+	s8				arg;
+	u8				sign;
 };
 
 struct func_event {
@@ -60,6 +60,7 @@ enum func_states {
 	FUNC_STATE_BRACKET,
 	FUNC_STATE_BRACKET_END,
 	FUNC_STATE_INDIRECT,
+	FUNC_STATE_PIPE,
 	FUNC_STATE_TYPE,
 	FUNC_STATE_VAR,
 	FUNC_STATE_COMMA,
@@ -251,11 +252,15 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 			break;
 		return FUNC_STATE_PARAM;
 
+	case FUNC_STATE_PIPE:
+		fevent->arg_cnt--;
+		goto comma;
 	case FUNC_STATE_PARAM:
 		if (token[0] == ')')
 			return FUNC_STATE_END;
 		/* Fall through */
 	case FUNC_STATE_COMMA:
+ comma:
 		for (i = 0; func_types[i].size; i++) {
 			if (strcmp(token, func_types[i].name) == 0)
 				break;
@@ -283,6 +288,8 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 			return FUNC_STATE_END;
 		case ',':
 			return FUNC_STATE_COMMA;
+		case '|':
+			return FUNC_STATE_PIPE;
 		case '[':
 			return FUNC_STATE_BRACKET;
 		}
@@ -309,6 +316,8 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 			return FUNC_STATE_END;
 		case ',':
 			return FUNC_STATE_COMMA;
+		case '|':
+			return FUNC_STATE_PIPE;
 		}
 		break;
 
@@ -365,7 +374,6 @@ static void func_event_trace(struct trace_event_file *trace_file,
 	int nr_args;
 	int size;
 	int pc;
-	int i = 0;
 
 	if (trace_trigger_soft_disabled(trace_file))
 		return;
@@ -387,12 +395,11 @@ static void func_event_trace(struct trace_event_file *trace_file,
 	nr_args = arch_get_func_args(pt_regs, 0, func_event->arg_cnt, args);
 
 	list_for_each_entry(arg, &func_event->args, list) {
-		if (i < nr_args)
-			val = get_arg(arg, args[i]);
+		if (arg->arg < nr_args)
+			val = get_arg(arg, args[arg->arg]);
 		else
 			val = 0;
 		memcpy(&entry->data[arg->offset], &val, arg->size);
-		i++;
 	}
 
 	event_trigger_unlock_commit_regs(trace_file, buffer, event,
@@ -747,12 +754,18 @@ static int func_event_seq_show(struct seq_file *m, void *v)
 	struct func_event *func_event = v;
 	struct func_arg *arg;
 	bool comma = false;
+	int last_arg = 0;
 
 	seq_printf(m, "%s(", func_event->func);
 
 	list_for_each_entry(arg, &func_event->args, list) {
-		if (comma)
-			seq_puts(m, ", ");
+		if (comma) {
+			if (last_arg == arg->arg)
+				seq_puts(m, " | ");
+			else
+				seq_puts(m, ", ");
+		}
+		last_arg = arg->arg;
 		comma = true;
 		seq_printf(m, "%s %s", arg->type, arg->name);
 		if (arg->indirect && arg->size)
