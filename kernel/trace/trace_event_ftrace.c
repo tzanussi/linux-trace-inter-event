@@ -60,6 +60,7 @@ enum func_states {
 	FUNC_STATE_BRACKET,
 	FUNC_STATE_BRACKET_END,
 	FUNC_STATE_INDIRECT,
+	FUNC_STATE_UNSIGNED,
 	FUNC_STATE_PIPE,
 	FUNC_STATE_TYPE,
 	FUNC_STATE_VAR,
@@ -195,7 +196,7 @@ static char *next_token(char **ptr, char *last)
 	return arg;
 }
 
-static int add_arg(struct func_event *fevent, int ftype)
+static int add_arg(struct func_event *fevent, int ftype, int unsign)
 {
 	struct func_type *func_type = &func_types[ftype];
 	struct func_arg *arg;
@@ -208,13 +209,18 @@ static int add_arg(struct func_event *fevent, int ftype)
 	if (!arg)
 		return -ENOMEM;
 
-	arg->type = kstrdup(func_type->name, GFP_KERNEL);
+	if (unsign)
+		arg->type = kasprintf(GFP_KERNEL, "unsigned %s",
+				      func_type->name);
+	else
+		arg->type = kstrdup(func_type->name, GFP_KERNEL);
 	if (!arg->type) {
 		kfree(arg);
 		return -ENOMEM;
 	}
 	arg->size = func_type->size;
-	arg->sign = func_type->sign;
+	if (!unsign)
+		arg->sign = func_type->sign;
 	arg->offset = ALIGN(fevent->arg_offset, arg->size);
 	arg->arg = fevent->arg_cnt;
 	fevent->arg_offset = arg->offset + arg->size;
@@ -234,12 +240,14 @@ static bool valid_name(const char *token)
 static enum func_states
 process_event(struct func_event *fevent, const char *token, enum func_states state)
 {
+	static int unsign;
 	long val;
 	int ret;
 	int i;
 
 	switch (state) {
 	case FUNC_STATE_INIT:
+		unsign = 0;
 		if (!valid_name(token))
 			break;
 		fevent->func = kstrdup(token, GFP_KERNEL);
@@ -261,13 +269,20 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 		/* Fall through */
 	case FUNC_STATE_COMMA:
  comma:
+		if (strcmp(token, "unsigned") == 0) {
+			unsign = 2;
+			return FUNC_STATE_UNSIGNED;
+		}
+		/* Fall through */
+	case FUNC_STATE_UNSIGNED:
 		for (i = 0; func_types[i].size; i++) {
 			if (strcmp(token, func_types[i].name) == 0)
 				break;
 		}
 		if (!func_types[i].size)
 			break;
-		ret = add_arg(fevent, i);
+		ret = add_arg(fevent, i, unsign);
+		unsign = 0;
 		if (ret < 0)
 			break;
 		return FUNC_STATE_TYPE;
