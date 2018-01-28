@@ -63,6 +63,8 @@ enum func_states {
 	FUNC_STATE_BRACKET_END,
 	FUNC_STATE_INDIRECT,
 	FUNC_STATE_UNSIGNED,
+	FUNC_STATE_ADDR,
+	FUNC_STATE_EQUAL,
 	FUNC_STATE_PIPE,
 	FUNC_STATE_PLUS,
 	FUNC_STATE_TYPE,
@@ -239,12 +241,39 @@ static int add_arg(struct func_event *fevent, int ftype, int unsign)
 		arg->sign = func_type->sign;
 	arg->offset = ALIGN(fevent->arg_offset, arg->size);
 	arg->func_type = ftype;
-	arg->arg = fevent->arg_cnt;
 	fevent->arg_offset = arg->offset + arg->size;
 
 	list_add_tail(&arg->list, &fevent->args);
 	fevent->last_arg = arg;
-	fevent->arg_cnt++;
+
+	return 0;
+}
+
+static int update_arg_name(struct func_event *fevent, const char *name)
+{
+	struct func_arg *arg = fevent->last_arg;
+
+	if (WARN_ON(!arg))
+		return -EINVAL;
+
+	arg->name = kstrdup(name, GFP_KERNEL);
+	if (!arg->name)
+		return -ENOMEM;
+	return 0;
+}
+
+static int update_arg_arg(struct func_event *fevent)
+{
+	struct func_arg *arg = fevent->last_arg;
+
+	if (WARN_ON(!arg))
+		return -EINVAL;
+
+	/* Make sure the arch can support this many args */
+	if (fevent->arg_cnt >= max_args)
+		return -EINVAL;
+
+	arg->arg = fevent->arg_cnt;
 
 	return 0;
 }
@@ -257,14 +286,16 @@ static bool valid_name(const char *token)
 static enum func_states
 process_event(struct func_event *fevent, const char *token, enum func_states state)
 {
+	static bool update_arg;
 	static int unsign;
-	long val;
+	unsigned long val;
 	int ret;
 	int i;
 
 	switch (state) {
 	case FUNC_STATE_INIT:
 		unsign = 0;
+		update_arg = false;
 		if (!valid_name(token))
 			break;
 		fevent->func = kstrdup(token, GFP_KERNEL);
@@ -277,15 +308,16 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 			break;
 		return FUNC_STATE_PARAM;
 
-	case FUNC_STATE_PIPE:
-		fevent->arg_cnt--;
-		goto comma;
 	case FUNC_STATE_PARAM:
 		if (token[0] == ')')
 			return FUNC_STATE_END;
 		/* Fall through */
 	case FUNC_STATE_COMMA:
- comma:
+		if (update_arg)
+			fevent->arg_cnt++;
+		update_arg = false;
+		/* Fall through */
+	case FUNC_STATE_PIPE:
 		if (strcmp(token, "unsigned") == 0) {
 			unsign = 2;
 			return FUNC_STATE_UNSIGNED;
@@ -305,19 +337,27 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 		return FUNC_STATE_TYPE;
 
 	case FUNC_STATE_TYPE:
-		if (!valid_name(token))
-			break;
 		if (WARN_ON(!fevent->last_arg))
 			break;
-		fevent->last_arg->name = kstrdup(token, GFP_KERNEL);
-		if (!fevent->last_arg->name)
+		if (update_arg_name(fevent, token) < 0)
 			break;
+		if (strncmp(token, "0x", 2) == 0)
+			goto equal;
+		if (!valid_name(token))
+			break;
+		update_arg = true;
 		return FUNC_STATE_VAR;
 
 	case FUNC_STATE_VAR:
+		if (token[0] == '=')
+			return FUNC_STATE_EQUAL;
+		if (WARN_ON(!fevent->last_arg))
+			break;
+		update_arg_arg(fevent);
+		update_arg = true;
 		switch (token[0]) {
 		case ')':
-			return FUNC_STATE_END;
+			goto end;
 		case ',':
 			return FUNC_STATE_COMMA;
 		case '|':
@@ -332,7 +372,7 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 	case FUNC_STATE_BRACKET:
 		if (WARN_ON(!fevent->last_arg))
 			break;
-		ret = kstrtol(token, 0, &val);
+		ret = kstrtoul(token, 0, &val);
 		if (ret)
 			break;
 		val *= fevent->last_arg->size;
@@ -347,7 +387,7 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 	case FUNC_STATE_BRACKET_END:
 		switch (token[0]) {
 		case ')':
-			return FUNC_STATE_END;
+			goto end;
 		case ',':
 			return FUNC_STATE_COMMA;
 		case '|':
@@ -358,16 +398,46 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 	case FUNC_STATE_PLUS:
 		if (WARN_ON(!fevent->last_arg))
 			break;
-		ret = kstrtol(token, 0, &val);
+		ret = kstrtoul(token, 0, &val);
 		if (ret)
 			break;
 		fevent->last_arg->index += val;
 		return FUNC_STATE_VAR;
 
+	case FUNC_STATE_ADDR:
+		switch (token[0]) {
+		case ')':
+			goto end;
+		case ',':
+			return FUNC_STATE_COMMA;
+		case '|':
+			return FUNC_STATE_PIPE;
+		}
+		break;
+
+	case FUNC_STATE_EQUAL:
+		if (strncmp(token, "0x", 2) != 0)
+			break;
+ equal:
+		if (WARN_ON(!fevent->last_arg))
+			break;
+		ret = kstrtoul(token, 0, &val);
+		if (ret < 0)
+			break;
+		update_arg = false;
+		fevent->last_arg->index = val;
+		fevent->last_arg->arg = -1;
+		fevent->last_arg->indirect = INDIRECT_FLAG;
+		return FUNC_STATE_ADDR;
+
 	default:
 		break;
 	}
 	return FUNC_STATE_ERROR;
+ end:
+	if (update_arg)
+		fevent->arg_cnt++;
+	return FUNC_STATE_END;
 }
 
 static long long get_arg(struct func_arg *arg, unsigned long val)
@@ -416,7 +486,7 @@ static void func_event_trace(struct trace_event_file *trace_file,
 	long args[func_event->arg_cnt];
 	long long val = 1;
 	unsigned long irq_flags;
-	int nr_args;
+	int nr_args = 0;
 	int size;
 	int pc;
 
@@ -437,12 +507,17 @@ static void func_event_trace(struct trace_event_file *trace_file,
 	entry = ring_buffer_event_data(event);
 	entry->ip = ip;
 	entry->parent_ip = parent_ip;
-	nr_args = arch_get_func_args(pt_regs, 0, func_event->arg_cnt, args);
+	if (func_event->arg_cnt)
+		nr_args = arch_get_func_args(pt_regs, 0, func_event->arg_cnt, args);
 
 	list_for_each_entry(arg, &func_event->args, list) {
-		if (arg->arg < nr_args)
-			val = get_arg(arg, args[arg->arg]);
-		else
+		if (arg->arg < nr_args) {
+			/* Is arg an address and not a parameter? */
+			if (arg->arg < 0)
+				val = get_arg(arg, 0);
+			else
+				val = get_arg(arg, args[arg->arg]);
+		} else
 			val = 0;
 		memcpy(&entry->data[arg->offset], &val, arg->size);
 	}
@@ -818,11 +893,15 @@ static int func_event_seq_show(struct seq_file *m, void *v)
 		last_arg = arg->arg;
 		comma = true;
 		seq_printf(m, "%s %s", arg->type, arg->name);
-		if (arg->index)
-			seq_printf(m, "+%ld", arg->index);
-		if (arg->indirect && arg->size)
-			seq_printf(m, "[%ld]",
-				   (arg->indirect ^ INDIRECT_FLAG) / arg->size);
+		if (arg->arg < 0) {
+			seq_printf(m, "=0x%lx", arg->index);
+		} else {
+			if (arg->index)
+				seq_printf(m, "+%ld", arg->index);
+			if (arg->indirect && arg->size)
+				seq_printf(m, "[%ld]",
+					   (arg->indirect ^ INDIRECT_FLAG) / arg->size);
+		}
 	}
 	seq_puts(m, ")\n");
 
