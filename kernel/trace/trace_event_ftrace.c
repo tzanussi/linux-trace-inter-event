@@ -20,6 +20,7 @@ struct func_arg {
 	char				*name;
 	long				indirect;
 	long				index;
+	short				array;
 	short				offset;
 	short				size;
 	s8				arg;
@@ -68,6 +69,9 @@ enum func_states {
 	FUNC_STATE_PIPE,
 	FUNC_STATE_PLUS,
 	FUNC_STATE_TYPE,
+	FUNC_STATE_ARRAY,
+	FUNC_STATE_ARRAY_SIZE,
+	FUNC_STATE_ARRAY_END,
 	FUNC_STATE_VAR,
 	FUNC_STATE_COMMA,
 	FUNC_STATE_END,
@@ -289,6 +293,7 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 	static bool update_arg;
 	static int unsign;
 	unsigned long val;
+	char *type;
 	int ret;
 	int i;
 
@@ -337,6 +342,10 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 		return FUNC_STATE_TYPE;
 
 	case FUNC_STATE_TYPE:
+		if (token[0] == '[')
+			return FUNC_STATE_ARRAY;
+		/* Fall through */
+	case FUNC_STATE_ARRAY_END:
 		if (WARN_ON(!fevent->last_arg))
 			break;
 		if (update_arg_name(fevent, token) < 0)
@@ -369,15 +378,37 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 		}
 		break;
 
+	case FUNC_STATE_ARRAY:
 	case FUNC_STATE_BRACKET:
 		if (WARN_ON(!fevent->last_arg))
 			break;
 		ret = kstrtoul(token, 0, &val);
 		if (ret)
 			break;
-		val *= fevent->last_arg->size;
-		fevent->last_arg->indirect = val ^ INDIRECT_FLAG;
-		return FUNC_STATE_INDIRECT;
+		if (state == FUNC_STATE_BRACKET) {
+			val *= fevent->last_arg->size;
+			fevent->last_arg->indirect = val ^ INDIRECT_FLAG;
+			return FUNC_STATE_INDIRECT;
+		}
+		if (!val)
+			break;
+		fevent->last_arg->array = val;
+		type = kasprintf(GFP_KERNEL, "%s[%d]", fevent->last_arg->type, (unsigned)val);
+		if (!type)
+			break;
+		kfree(fevent->last_arg->type);
+		fevent->last_arg->type = type;
+		/*
+		 * arg_offset has already been updated once by size.
+		 * This update needs to account for that (hence the "- 1").
+		 */
+		fevent->arg_offset += fevent->last_arg->size * (fevent->last_arg->array - 1);
+		return FUNC_STATE_ARRAY_SIZE;
+
+	case FUNC_STATE_ARRAY_SIZE:
+		if (token[0] != ']')
+			break;
+		return FUNC_STATE_ARRAY_END;
 
 	case FUNC_STATE_INDIRECT:
 		if (token[0] != ']')
@@ -452,6 +483,10 @@ static long long get_arg(struct func_arg *arg, unsigned long val)
 
 	val = val + (arg->indirect ^ INDIRECT_FLAG);
 
+	/* Arrays do their own indirect reads */
+	if (arg->array)
+		return val;
+
 	ret = probe_kernel_read(buf, (void *)val, arg->size);
 	if (ret)
 		return 0;
@@ -471,6 +506,21 @@ static long long get_arg(struct func_arg *arg, unsigned long val)
 			break;
 	}
 	return val;
+}
+
+static void get_array(void *dst, struct func_arg *arg, unsigned long val)
+{
+	void *ptr = (void *)val;
+	int ret;
+	int i;
+
+	for (i = 0; i < arg->array; i++) {
+		ret = probe_kernel_read(dst, ptr, arg->size);
+		if (ret)
+			memset(dst, 0, arg->size);
+		ptr += arg->size;
+		dst += arg->size;
+	}
 }
 
 static void func_event_trace(struct trace_event_file *trace_file,
@@ -519,7 +569,10 @@ static void func_event_trace(struct trace_event_file *trace_file,
 				val = get_arg(arg, args[arg->arg]);
 		} else
 			val = 0;
-		memcpy(&entry->data[arg->offset], &val, arg->size);
+		if (arg->array)
+			get_array(&entry->data[arg->offset], arg, val);
+		else
+			memcpy(&entry->data[arg->offset], &val, arg->size);
 	}
 
 	event_trigger_unlock_commit_regs(trace_file, buffer, event,
@@ -574,6 +627,25 @@ static void make_fmt(struct func_arg *arg, char *fmt)
 	fmt[c++] = '\0';
 }
 
+static void write_data(struct trace_seq *s, const struct func_arg *arg, const char *fmt,
+		       const void *data)
+{
+	switch (arg->size) {
+	case 8:
+		trace_seq_printf(s, fmt, *(unsigned long long *)data);
+		break;
+	case 4:
+		trace_seq_printf(s, fmt, *(unsigned *)data);
+		break;
+	case 2:
+		trace_seq_printf(s, fmt, *(unsigned short *)data);
+		break;
+	case 1:
+		trace_seq_printf(s, fmt, *(unsigned char *)data);
+		break;
+	}
+}
+
 static enum print_line_t
 func_event_print(struct trace_iterator *iter, int flags,
 		 struct trace_event *event)
@@ -585,6 +657,7 @@ func_event_print(struct trace_iterator *iter, int flags,
 	char fmt[FMT_SIZE];
 	void *data;
 	bool comma = false;
+	int a;
 
 	entry = (struct func_event_hdr *)iter->ent;
 
@@ -601,20 +674,18 @@ func_event_print(struct trace_iterator *iter, int flags,
 
 		make_fmt(arg, fmt);
 
-		switch (arg->size) {
-		case 8:
-			trace_seq_printf(s, fmt, *(unsigned long long *)data);
-			break;
-		case 4:
-			trace_seq_printf(s, fmt, *(unsigned *)data);
-			break;
-		case 2:
-			trace_seq_printf(s, fmt, *(unsigned short *)data);
-			break;
-		case 1:
-			trace_seq_printf(s, fmt, *(unsigned char *)data);
-			break;
-		}
+		if (arg->array) {
+			comma = false;
+			trace_seq_putc(s, '{');
+			for (a = 0; a < arg->array; a++, data += arg->size) {
+				if (comma)
+					trace_seq_putc(s, ':');
+				comma = true;
+				write_data(s, arg, fmt, data);
+			}
+			trace_seq_putc(s, '}');
+		} else
+			write_data(s, arg, fmt, data);
 	}
 	trace_seq_puts(s, ")\n");
 	return trace_handle_return(s);
@@ -637,11 +708,14 @@ static int func_event_define_fields(struct trace_event_call *event_call)
 	DEFINE_FIELD(unsigned long, parent_ip, "__ip", 0);
 
 	list_for_each_entry(arg, &fevent->args, list) {
+		int size = arg->size;
+
+		if (arg->array)
+			size *= arg->array;
 		ret = trace_define_field(event_call, arg->type,
 					 arg->name,
 					 sizeof(field) + arg->offset,
-					 arg->size, arg->sign,
-					 FILTER_OTHER);
+					 size, arg->sign, FILTER_OTHER);
 		if (ret < 0)
 			return ret;
 	}
@@ -746,6 +820,7 @@ static int __set_print_fmt(struct func_event *func_event,
 	const char *fmt_end = ")\", REC->__ip, REC->__parent_ip";
 	char fmt[FMT_SIZE];
 	char *ptr = buf;
+	int a;
 	bool comma = false;
 	int total = 0;
 
@@ -754,13 +829,37 @@ static int __set_print_fmt(struct func_event *func_event,
 		if (comma)
 			total += print_buf(&ptr, &len, ", ");
 		comma = true;
+
+		total += print_buf(&ptr, &len, "%s=", arg->name);
+
 		make_fmt(arg, fmt);
-		total += print_buf(&ptr, &len, "%s=%s", arg->name, fmt);
+
+		if (arg->array) {
+			bool colon = false;
+
+			total += print_buf(&ptr, &len, "{");
+			for (a = 0; a < arg->array; a++) {
+				if (colon)
+					total += print_buf(&ptr, &len, ":");
+				colon = true;
+				total += print_buf(&ptr, &len, "%s", fmt);
+			}
+			total += print_buf(&ptr, &len, "}");
+		} else {
+			total += print_buf(&ptr, &len, "%s", fmt);
+		}
 	}
 	total += print_buf(&ptr, &len, "%s", fmt_end);
 
-	list_for_each_entry(arg, &func_event->args, list)
-		total += print_buf(&ptr, &len, ", REC->%s", arg->name);
+	list_for_each_entry(arg, &func_event->args, list) {
+		if (arg->array) {
+			for (a = 0; a < arg->array; a++)
+				total += print_buf(&ptr, &len, ", REC->%s[%d]",
+						   arg->name, a);
+		} else {
+			total += print_buf(&ptr, &len, ", REC->%s", arg->name);
+		}
+	}
 
 	return total;
 }
