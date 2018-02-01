@@ -748,46 +748,33 @@ static int get_string(unsigned long addr, unsigned int idx,
 	return len;
 }
 
-static void func_event_trace(struct trace_event_file *trace_file,
-			     struct func_event *func_event,
-			     unsigned long ip, unsigned long parent_ip,
-			     struct pt_regs *pt_regs)
+static int get_event_size(struct func_event *func_event, struct pt_regs *pt_regs,
+			  long *args, int *nr_args)
 {
-	struct func_event_hdr *entry;
-	struct trace_event_call *call = &func_event->call;
-	struct ring_buffer_event *event;
-	struct ring_buffer *buffer;
-	struct func_arg *arg;
-	long args[func_event->arg_cnt];
-	long long val = 1;
-	unsigned long irq_flags;
-	int str_offset;
-	int str_idx = 0;
-	int nr_args = 0;
 	int size;
-	int pc;
 
-	if (trace_trigger_soft_disabled(trace_file))
-		return;
-
-	local_save_flags(irq_flags);
-	pc = preempt_count();
-
-	size = func_event->arg_offset + sizeof(*entry);
+	size = func_event->arg_offset + sizeof(struct func_event_hdr);
 
 	if (func_event->arg_cnt)
-		nr_args = arch_get_func_args(pt_regs, 0, func_event->arg_cnt, args);
+		*nr_args = arch_get_func_args(pt_regs, 0, func_event->arg_cnt, args);
+	else
+		*nr_args = 0;
 
 	if (func_event->has_strings)
-		size += calculate_strings(func_event, nr_args, args);
+		size += calculate_strings(func_event, *nr_args, args);
 
-	event = trace_event_buffer_lock_reserve(&buffer, trace_file,
-						call->event.type,
-						size, irq_flags, pc);
-	if (!event)
-		return;
+	return size;
+}
 
-	entry = ring_buffer_event_data(event);
+static void
+record_entry(struct func_event_hdr *entry, struct func_event *func_event,
+	     unsigned long ip, unsigned long parent_ip, int nr_args, long *args)
+{
+	struct func_arg *arg;
+	long long val;
+	int str_offset;
+	int str_idx = 0;
+
 	entry->ip = ip;
 	entry->parent_ip = parent_ip;
 
@@ -810,10 +797,79 @@ static void func_event_trace(struct trace_event_file *trace_file,
 		} else
 			memcpy(&entry->data[arg->offset], &val, arg->size);
 	}
+}
 
+static void func_event_trace(struct trace_event_file *trace_file,
+			     struct func_event *func_event,
+			     unsigned long ip, unsigned long parent_ip,
+			     struct pt_regs *pt_regs)
+{
+	struct func_event_hdr *entry;
+	struct trace_event_call *call = &func_event->call;
+	struct ring_buffer_event *event;
+	struct ring_buffer *buffer;
+	long args[func_event->arg_cnt];
+	unsigned long irq_flags;
+	int nr_args;
+	int size;
+	int pc;
+
+	if (trace_trigger_soft_disabled(trace_file))
+		return;
+
+	local_save_flags(irq_flags);
+	pc = preempt_count();
+
+	size = get_event_size(func_event, pt_regs, args, &nr_args);
+
+	event = trace_event_buffer_lock_reserve(&buffer, trace_file,
+						call->event.type,
+						size, irq_flags, pc);
+	if (!event)
+		return;
+
+	entry = ring_buffer_event_data(event);
+	record_entry(entry, func_event, ip, parent_ip, nr_args, args);
 	event_trigger_unlock_commit_regs(trace_file, buffer, event,
 					 entry, irq_flags, pc, pt_regs);
 }
+
+#ifdef CONFIG_PERF_EVENTS
+/* Kprobe profile handler */
+static void func_event_perf(struct func_event *func_event,
+			    unsigned long ip, unsigned long parent_ip,
+			    struct pt_regs *pt_regs)
+{
+	struct trace_event_call *call = &func_event->call;
+	struct func_event_hdr *entry;
+	struct hlist_head *head;
+	long args[func_event->arg_cnt];
+	int nr_args = 0;
+	int rctx;
+	int size;
+
+	if (bpf_prog_array_valid(call) && !trace_call_bpf(call, pt_regs))
+		return;
+
+	head = this_cpu_ptr(call->perf_events);
+	if (hlist_empty(head))
+		return;
+
+	size = get_event_size(func_event, pt_regs, args, &nr_args);
+
+	entry = perf_trace_buf_alloc(size, NULL, &rctx);
+	if (!entry)
+		return;
+
+	record_entry(entry, func_event, ip, parent_ip, nr_args, args);
+	perf_trace_buf_submit(entry, size, rctx, call->event.type, 1, pt_regs,
+			      head, NULL);
+}
+#else
+static inline void func_event_perf(struct func_event *func_event,
+				   unsigned long ip, unsigned long parent_ip,
+				   struct pt_regs *pt_regs) { }
+#endif
 
 static void
 func_event_call(unsigned long ip, unsigned long parent_ip,
@@ -829,7 +885,10 @@ func_event_call(unsigned long ip, unsigned long parent_ip,
 	rcu_irq_enter_irqson();
 	rcu_read_lock_sched_notrace();
 	list_for_each_entry_rcu(ff, &func_event->files, list) {
-		func_event_trace(ff->file, func_event, ip, parent_ip, pt_regs);
+		if (ff->file)
+			func_event_trace(ff->file, func_event, ip, parent_ip, pt_regs);
+		else
+			func_event_perf(func_event, ip, parent_ip, pt_regs);
 	}
 	rcu_read_unlock_sched_notrace();
 	rcu_irq_exit_irqson();
@@ -1048,6 +1107,17 @@ static int func_event_register(struct trace_event_call *event,
 		return enable_func_event(func_event, file);
 	case TRACE_REG_UNREGISTER:
 		return disable_func_event(func_event, file);
+#ifdef CONFIG_PERF_EVENTS
+	case TRACE_REG_PERF_REGISTER:
+		return enable_func_event(func_event, NULL);
+	case TRACE_REG_PERF_UNREGISTER:
+		return disable_func_event(func_event, NULL);
+	case TRACE_REG_PERF_OPEN:
+	case TRACE_REG_PERF_CLOSE:
+	case TRACE_REG_PERF_ADD:
+	case TRACE_REG_PERF_DEL:
+		return 0;
+#endif
 	default:
 		break;
 	}
