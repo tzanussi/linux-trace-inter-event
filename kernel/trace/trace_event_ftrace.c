@@ -75,6 +75,7 @@ enum func_states {
 	FUNC_STATE_ARRAY_END,
 	FUNC_STATE_VAR,
 	FUNC_STATE_COMMA,
+	FUNC_STATE_NULL,
 	FUNC_STATE_END,
 	FUNC_STATE_ERROR,
 };
@@ -117,6 +118,7 @@ static struct func_type {
 	int		sign;
 } func_types[] = {
 	FUNC_TYPES,
+	{ "NULL",	0,	0 },
 	{ NULL,		0,	0 }
 };
 
@@ -125,6 +127,7 @@ static struct func_type {
 
 enum {
 	FUNC_TYPES,
+	FUNC_TYPE_NULL,
 	FUNC_TYPE_MAX
 };
 
@@ -271,9 +274,11 @@ static int add_arg(struct func_event *fevent, int ftype, int unsign)
 	arg->size = func_type->size;
 	if (!unsign)
 		arg->sign = func_type->sign;
-	arg->offset = ALIGN(fevent->arg_offset, arg->size);
 	arg->func_type = ftype;
-	fevent->arg_offset = arg->offset + arg->size;
+	arg->offset = ALIGN(fevent->arg_offset, arg->size);
+
+	if (ftype != FUNC_TYPE_NULL)
+		fevent->arg_offset = arg->offset + arg->size;
 
 	list_add_tail(&arg->list, &fevent->args);
 	fevent->last_arg = arg;
@@ -362,6 +367,8 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 		update_arg = false;
 		/* Fall through */
 	case FUNC_STATE_PIPE:
+		if (strcmp(token, "NULL") == 0)
+			return FUNC_STATE_NULL;
 		if (strcmp(token, "unsigned") == 0) {
 			unsign = 2;
 			return FUNC_STATE_UNSIGNED;
@@ -510,6 +517,19 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 		fevent->last_arg->arg = -1;
 		fevent->last_arg->indirect = INDIRECT_FLAG;
 		return FUNC_STATE_ADDR;
+
+	case FUNC_STATE_NULL:
+		ret = add_arg(fevent, FUNC_TYPE_NULL, 0);
+		if (ret < 0)
+			break;
+		switch (token[0]) {
+		case ')':
+			goto end;
+		case ',':
+			update_arg = true;
+			return FUNC_STATE_COMMA;
+		}
+		break;
 
 	default:
 		break;
@@ -687,6 +707,8 @@ static void func_event_trace(struct trace_event_file *trace_file,
 	entry->parent_ip = parent_ip;
 
 	list_for_each_entry(arg, &func_event->args, list) {
+		if (arg->func_type == FUNC_TYPE_NULL)
+			continue;
 		if (arg->arg < nr_args)
 			val = get_arg(arg, args);
 		else
@@ -813,6 +835,8 @@ func_event_print(struct trace_iterator *iter, int flags,
 	trace_seq_printf(s, "%ps->%ps(",
 			 (void *)entry->parent_ip, (void *)entry->ip);
 	list_for_each_entry(arg, &func_event->args, list) {
+		if (arg->func_type == FUNC_TYPE_NULL)
+			continue;
 		if (comma)
 			trace_seq_puts(s, ", ");
 		comma = true;
@@ -861,6 +885,9 @@ static int func_event_define_fields(struct trace_event_call *event_call)
 
 	list_for_each_entry(arg, &fevent->args, list) {
 		int size = arg->size;
+
+		if (arg->func_type == FUNC_TYPE_NULL)
+			continue;
 
 		if (arg->array)
 			size *= arg->array;
@@ -978,6 +1005,8 @@ static int __set_print_fmt(struct func_event *func_event,
 
 	total += print_buf(&ptr, &len, "%s", fmt_start);
 	list_for_each_entry(arg, &func_event->args, list) {
+		if (arg->func_type == FUNC_TYPE_NULL)
+			continue;
 		if (comma)
 			total += print_buf(&ptr, &len, ", ");
 		comma = true;
@@ -1004,6 +1033,8 @@ static int __set_print_fmt(struct func_event *func_event,
 	total += print_buf(&ptr, &len, "%s", fmt_end);
 
 	list_for_each_entry(arg, &func_event->args, list) {
+		if (arg->func_type == FUNC_TYPE_NULL)
+			continue;
 		/* Don't iterate for strings */
 		if (arg->array && arg->func_type != FUNC_TYPE_char) {
 			for (a = 0; a < arg->array; a++)
@@ -1148,7 +1179,10 @@ static int func_event_seq_show(struct seq_file *m, void *v)
 		}
 		last_arg = arg->arg;
 		comma = true;
-		seq_printf(m, "%s %s", arg->type, arg->name);
+		if (arg->func_type == FUNC_TYPE_NULL)
+			seq_puts(m, "NULL");
+		else
+			seq_printf(m, "%s %s", arg->type, arg->name);
 		if (arg->arg < 0) {
 			seq_printf(m, "=0x%lx", arg->index);
 		} else {
