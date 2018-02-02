@@ -14,8 +14,15 @@
 #define WRITE_BUFSIZE		4096
 #define INDIRECT_FLAG		0x10000000
 
+struct func_arg_redirect {
+	struct list_head		list;
+	long				index;
+	long				indirect;
+};
+
 struct func_arg {
 	struct list_head		list;
+	struct list_head		redirects;
 	char				*type;
 	char				*name;
 	long				indirect;
@@ -73,6 +80,8 @@ enum func_states {
 	FUNC_STATE_ARRAY,
 	FUNC_STATE_ARRAY_SIZE,
 	FUNC_STATE_ARRAY_END,
+	FUNC_STATE_REDIRECT_PLUS,
+	FUNC_STATE_REDIRECT_BRACKET,
 	FUNC_STATE_VAR,
 	FUNC_STATE_COMMA,
 	FUNC_STATE_NULL,
@@ -262,6 +271,8 @@ static int add_arg(struct func_event *fevent, int ftype, int unsign)
 	if (!arg)
 		return -ENOMEM;
 
+	INIT_LIST_HEAD(&arg->redirects);
+
 	if (unsign)
 		arg->type = kasprintf(GFP_KERNEL, "unsigned %s",
 				      func_type->name);
@@ -322,6 +333,22 @@ static int update_arg_arg(struct func_event *fevent)
 		return -EINVAL;
 
 	arg->arg = fevent->arg_cnt;
+
+	return 0;
+}
+
+static int add_arg_redirect(struct func_arg *arg, long index, long indirect)
+{
+	struct func_arg_redirect *redirect;
+
+	redirect = kzalloc(sizeof(*redirect), GFP_KERNEL);
+	if (!redirect)
+		return -ENOMEM;
+
+	redirect->index = index;
+	redirect->indirect = indirect;
+
+	list_add_tail(&redirect->list, &arg->redirects);
 
 	return 0;
 }
@@ -480,6 +507,10 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 			return FUNC_STATE_COMMA;
 		case '|':
 			return FUNC_STATE_PIPE;
+		case '+':
+			return FUNC_STATE_REDIRECT_PLUS;
+		case '[':
+			return FUNC_STATE_REDIRECT_BRACKET;
 		}
 		break;
 
@@ -502,6 +533,30 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 			return FUNC_STATE_PIPE;
 		}
 		break;
+
+	case FUNC_STATE_REDIRECT_PLUS:
+		if (WARN_ON(!fevent->last_arg))
+			break;
+		ret = kstrtoul(token, 0, &val);
+		if (ret)
+			break;
+		ret = add_arg_redirect(fevent->last_arg, val, 0);
+		if (ret)
+			break;
+		return FUNC_STATE_BRACKET_END;
+
+	case FUNC_STATE_REDIRECT_BRACKET:
+		if (WARN_ON(!fevent->last_arg))
+			break;
+		ret = kstrtoul(token, 0, &val);
+		if (ret)
+			break;
+		val *= fevent->last_arg->size;
+		val ^= INDIRECT_FLAG;
+		ret = add_arg_redirect(fevent->last_arg, 0, val);
+		if (ret)
+			break;
+		return FUNC_STATE_INDIRECT;
 
 	case FUNC_STATE_EQUAL:
 		if (strncmp(token, "0x", 2) != 0)
@@ -541,20 +596,50 @@ process_event(struct func_event *fevent, const char *token, enum func_states sta
 	return FUNC_STATE_END;
 }
 
-static long long __get_arg(struct func_arg *arg, unsigned long val)
+static unsigned long process_redirects(struct func_arg *arg, unsigned long val,
+				       char *buf)
+{
+	struct func_arg_redirect *redirect;
+	int ret;
+
+	if (arg->indirect) {
+		ret = probe_kernel_read(buf, (void *)val, sizeof(long));
+		if (ret)
+			return 0;
+		val = *(unsigned long *)buf;
+	}
+
+	list_for_each_entry(redirect, &arg->redirects, list) {
+		val += redirect->index;
+		if (redirect->indirect) {
+			val += (redirect->indirect ^ INDIRECT_FLAG);
+			ret = probe_kernel_read(buf, (void *)val, sizeof(long));
+			if (ret)
+				return 0;
+			val = *(unsigned long *)buf;
+		}
+	}
+	return val;
+}
+
+static long long __get_arg(struct func_arg *arg, unsigned long long val)
 {
 	char buf[8];
 	int ret;
 
 	val += arg->index;
 
-	if (!arg->indirect)
-		return val;
+	if (arg->indirect)
+		val += (arg->indirect ^ INDIRECT_FLAG);
 
-	val = val + (arg->indirect ^ INDIRECT_FLAG);
+	if (!list_empty(&arg->redirects))
+		return process_redirects(arg, val, buf);
+
+	if (!val)
+		return 0;
 
 	/* Arrays and strings do their own indirect reads */
-	if (arg->array || arg->func_type == FUNC_TYPE_string)
+	if (!arg->indirect || arg->array || arg->func_type == FUNC_TYPE_string)
 		return val;
 
 	ret = probe_kernel_read(buf, (void *)val, arg->size);
@@ -1164,6 +1249,7 @@ static void func_event_seq_stop(struct seq_file *m, void *v)
 static int func_event_seq_show(struct seq_file *m, void *v)
 {
 	struct func_event *func_event = v;
+	struct func_arg_redirect *redirect;
 	struct func_arg *arg;
 	bool comma = false;
 	int last_arg = 0;
@@ -1191,6 +1277,13 @@ static int func_event_seq_show(struct seq_file *m, void *v)
 			if (arg->indirect && arg->size)
 				seq_printf(m, "[%ld]",
 					   (arg->indirect ^ INDIRECT_FLAG) / arg->size);
+		}
+		list_for_each_entry(redirect, &arg->redirects, list) {
+			if (redirect->index)
+				seq_printf(m, "+%ld", redirect->index);
+			if (redirect->indirect)
+				seq_printf(m, "[%ld]",
+					   (redirect->indirect ^ INDIRECT_FLAG) / arg->size);
 		}
 	}
 	seq_puts(m, ")\n");

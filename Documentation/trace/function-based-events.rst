@@ -101,11 +101,14 @@ as follows:
          'char' | 'short' | 'int' | 'long' | 'size_t' |
 	 'symbol' | 'string'
 
- FIELD := <name> | <name> INDEX | <name> OFFSET | <name> OFFSET INDEX
+ FIELD := <name> | <name> INDEX | <name> OFFSET | <name> OFFSET INDEX |
+	 FIELD INDIRECT
 
  INDEX := '[' <number> ']'
 
  OFFSET := '+' <number>
+
+ INDIRECT := INDEX | OFFSET | INDIRECT INDIRECT | ''
 
  ADDR := A hexidecimal address starting with '0x'
 
@@ -385,3 +388,38 @@ based event.
 NULL can appear in any argument, to have them ignored. Note, skipping arguments
 does not give you access to later arguments if they are not supported by the
 architecture. The architecture only supplies the first set of arguments.
+
+
+The chain of indirects
+======================
+
+When a parameter is a structure, and that structure points to another structure,
+the data of that structure can still be found.
+
+ssize_t __vfs_read(struct file *file, char __user *buf, size_t count,
+		   loff_t *pos)
+
+has the following code.
+
+	if (file->f_op->read)
+		return file->f_op->read(file, buf, count, pos);
+
+To trace all the functions that are called by f_op->read(), that information
+can be obtained from the file pointer.
+
+Using gdb again:
+
+   (gdb) printf "%d\n", &((struct file *)0)->f_op
+40
+   (gdb) printf "%d\n", &((struct file_operations *)0)->read
+16
+
+    # echo '__vfs_read(symbol read+40[0]+16)' > function_events
+
+  # echo 1 > events/functions/__vfs_read/enable
+  # cat trace
+         sshd-1343  [005] ...2   199.734752: vfs_read->__vfs_read(read=tty_read+0x0/0xf0)
+         bash-1344  [003] ...2   199.734822: vfs_read->__vfs_read(read=tty_read+0x0/0xf0)
+         sshd-1343  [005] ...2   199.734835: vfs_read->__vfs_read(read=tty_read+0x0/0xf0)
+ avahi-daemon-910   [003] ...2   200.136740: vfs_read->__vfs_read(read=          (null))
+ avahi-daemon-910   [003] ...2   200.136750: vfs_read->__vfs_read(read=          (null))
