@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Samsung's Exynos4412 based Trats 2 board device tree source
  *
@@ -6,11 +7,7 @@
  *
  * Device tree source file for Samsung's Trats 2 board which is based on
  * Samsung's Exynos4412 SoC.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
-*/
+ */
 
 /dts-v1/;
 #include "exynos4412.dtsi"
@@ -288,17 +285,6 @@
 		};
 	};
 
-	camera: camera {
-		pinctrl-0 = <&cam_port_a_clk_active &cam_port_b_clk_active>;
-		pinctrl-names = "default";
-		status = "okay";
-		assigned-clocks = <&clock CLK_MOUT_CAM0>,
-				  <&clock CLK_MOUT_CAM1>;
-		assigned-clock-parents = <&clock CLK_XUSBXTI>,
-					 <&clock CLK_XUSBXTI>;
-
-
-	};
 
 	wlan_pwrseq: sdhci3-pwrseq {
 		compatible = "mmc-pwrseq-simple";
@@ -401,6 +387,16 @@
 &bus_mfc {
 	devfreq = <&bus_leftbus>;
 	status = "okay";
+};
+
+&camera {
+	pinctrl-0 = <&cam_port_a_clk_active &cam_port_b_clk_active>;
+	pinctrl-names = "default";
+	status = "okay";
+	assigned-clocks = <&clock CLK_MOUT_CAM0>,
+			  <&clock CLK_MOUT_CAM1>;
+	assigned-clock-parents = <&clock CLK_XUSBXTI>,
+				 <&clock CLK_XUSBXTI>;
 };
 
 &cpu0 {
@@ -527,32 +523,6 @@
 	pinctrl-0 = <&fimc_is_uart>;
 	pinctrl-names = "default";
 	status = "okay";
-
-	i2c1_isp: i2c-isp@12140000 {
-		pinctrl-0 = <&fimc_is_i2c1>;
-		pinctrl-names = "default";
-
-		s5k6a3@10 {
-			compatible = "samsung,s5k6a3";
-			reg = <0x10>;
-			svdda-supply = <&cam_io_reg>;
-			svddio-supply = <&ldo19_reg>;
-			afvdd-supply = <&ldo19_reg>;
-			clock-frequency = <24000000>;
-			/* CAM_B_CLKOUT */
-			clocks = <&camera 1>;
-			clock-names = "extclk";
-			samsung,camclk-out = <1>;
-			gpios = <&gpm1 6 GPIO_ACTIVE_HIGH>;
-
-			port {
-				is_s5k6a3_ep: endpoint {
-					remote-endpoint = <&csis1_ep>;
-					data-lanes = <1>;
-				};
-			};
-		};
-	};
 };
 
 &fimc_lite_0 {
@@ -624,6 +594,32 @@
 			s5c73m3_ep: endpoint {
 				remote-endpoint = <&csis0_ep>;
 				data-lanes = <1 2 3 4>;
+			};
+		};
+	};
+};
+
+&i2c1_isp {
+	pinctrl-0 = <&fimc_is_i2c1>;
+	pinctrl-names = "default";
+
+	s5k6a3@10 {
+		compatible = "samsung,s5k6a3";
+		reg = <0x10>;
+		svdda-supply = <&cam_io_reg>;
+		svddio-supply = <&ldo19_reg>;
+		afvdd-supply = <&ldo19_reg>;
+		clock-frequency = <24000000>;
+		/* CAM_B_CLKOUT */
+		clocks = <&camera 1>;
+		clock-names = "extclk";
+		samsung,camclk-out = <1>;
+		gpios = <&gpm1 6 GPIO_ACTIVE_HIGH>;
+
+		port {
+			is_s5k6a3_ep: endpoint {
+				remote-endpoint = <&csis1_ep>;
+				data-lanes = <1>;
 			};
 		};
 	};
