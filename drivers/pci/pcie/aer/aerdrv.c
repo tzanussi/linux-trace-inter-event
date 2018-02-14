@@ -21,10 +21,10 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
-#include <linux/pcieport_if.h>
 #include <linux/slab.h>
 
 #include "aerdrv.h"
+#include "../../pcieport_if.h"
 #include "../../pci.h"
 
 static int aer_probe(struct pcie_device *dev);
