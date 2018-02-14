@@ -29,7 +29,6 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/freezer.h>
-#include <linux/pm_runtime.h>
 #include <linux/tpm_eventlog.h>
 
 #include "tpm.h"
@@ -465,8 +464,11 @@ ssize_t tpm_transmit(struct tpm_chip *chip, struct tpm_space *space,
 			goto out_no_locality;
 	}
 
-	if (chip->dev.parent)
-		pm_runtime_get_sync(chip->dev.parent);
+	if (chip->ops->cmd_ready) {
+		rc = chip->ops->cmd_ready(chip);
+		if (rc)
+			goto out;
+	}
 
 	rc = tpm2_prepare_space(chip, space, ordinal, buf);
 	if (rc)
@@ -528,8 +530,11 @@ out_recv:
 	rc = tpm2_commit_space(chip, space, ordinal, buf, &len);
 
 out:
-	if (chip->dev.parent)
-		pm_runtime_put_sync(chip->dev.parent);
+	if (chip->ops->go_idle) {
+		rc = chip->ops->go_idle(chip);
+		if (rc)
+			goto out;
+	}
 
 	if (need_locality)
 		tpm_relinquish_locality(chip);
