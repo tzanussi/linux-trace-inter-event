@@ -3089,6 +3089,20 @@ static struct resource bss_resource = {
 	.flags	= IORESOURCE_BUSY | IORESOURCE_SYSTEM_RAM
 };
 
+static struct resource system_rom_resource = {
+	.name	= "System ROM",
+	.start  = 0xf0000,
+	.end    = 0xfffff,
+	.flags	= IORESOURCE_BUSY | IORESOURCE_MEM,
+};
+
+static struct resource video_rom_resource = {
+	.name	= "Video ROM",
+	.start  = 0xc0000,
+	.end    = 0xc7fff,
+	.flags	= IORESOURCE_BUSY | IORESOURCE_MEM,
+};
+
 static inline resource_size_t compute_kern_paddr(void *addr)
 {
 	return (resource_size_t) (addr - KERNBASE + kern_base);
@@ -3133,6 +3147,9 @@ static int __init report_memory(void)
 		insert_resource(res, &data_resource);
 		insert_resource(res, &bss_resource);
 	}
+
+	request_resource(&iomem_resource, &system_rom_resource);
+	request_resource(&iomem_resource, &video_rom_resource);
 
 	return 0;
 }
