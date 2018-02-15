@@ -1367,6 +1367,9 @@ check_field_for_var_ref(struct hist_field *hist_field,
 	struct hist_field *found = NULL;
 
 	if (hist_field && hist_field->flags & HIST_FIELD_FL_VAR_REF) {
+		if (hist_field->hist_data == hist_field->var.hist_data)
+			return NULL;
+
 		if (hist_field->var.idx == var_idx &&
 		    hist_field->var.hist_data == var_data) {
 			found = hist_field;
@@ -1716,6 +1719,8 @@ static struct hist_field *find_event_var(struct hist_trigger_data *hist_data,
 		return NULL;
 
 	hist_field = find_file_var(file, var_name);
+	if (!hist_field)
+		hist_field = find_var_field(hist_data, var_name);
 
 	return hist_field;
 }
@@ -2468,13 +2473,14 @@ static int init_var_ref(struct hist_field *ref_field,
 	goto out;
 }
 
-static struct hist_field *create_var_ref(struct hist_field *var_field,
+static struct hist_field *create_var_ref(struct hist_trigger_data *hist_data,
+					 struct hist_field *var_field,
 					 char *system, char *event_name)
 {
 	unsigned long flags = HIST_FIELD_FL_VAR_REF;
 	struct hist_field *ref_field;
 
-	ref_field = create_hist_field(var_field->hist_data, NULL, flags, NULL);
+	ref_field = create_hist_field(hist_data, NULL, flags, NULL);
 	if (ref_field) {
 		if (init_var_ref(ref_field, var_field, system, event_name)) {
 			destroy_hist_field(ref_field, 0);
@@ -2553,7 +2559,7 @@ static struct hist_field *parse_var_ref(struct hist_trigger_data *hist_data,
 
 	var_field = find_event_var(hist_data, system, event_name, var_name);
 	if (var_field)
-		ref_field = create_var_ref(var_field, system, event_name);
+		ref_field = create_var_ref(hist_data, var_field, system, event_name);
 
 	if (!ref_field)
 		hist_err_event("Couldn't find variable: $",
@@ -3875,7 +3881,7 @@ static int onmatch_create(struct hist_trigger_data *hist_data,
 		}
 
 		if (check_synth_field(event, hist_field, field_pos) == 0) {
-			var_ref = create_var_ref(hist_field, system, event_name);
+			var_ref = create_var_ref(hist_data, hist_field, system, event_name);
 			if (!var_ref) {
 				kfree(p);
 				ret = -ENOMEM;
@@ -4238,7 +4244,8 @@ static int create_key_fields(struct hist_trigger_data *hist_data,
 }
 
 static int create_var_fields(struct hist_trigger_data *hist_data,
-			     struct trace_event_file *file)
+			     struct trace_event_file *file,
+			     bool remove)
 {
 	unsigned int i, j = hist_data->n_vals;
 	int ret = 0;
@@ -4254,6 +4261,9 @@ static int create_var_fields(struct hist_trigger_data *hist_data,
 		kfree(expr);
 		if (ret)
 			goto out;
+
+		if (!remove)
+			save_hist_vars(hist_data);
 	}
  out:
 	return ret;
@@ -4324,7 +4334,8 @@ static int parse_var_defs(struct hist_trigger_data *hist_data)
 }
 
 static int create_hist_fields(struct hist_trigger_data *hist_data,
-			      struct trace_event_file *file)
+			      struct trace_event_file *file,
+			      bool remove)
 {
 	int ret;
 
@@ -4336,7 +4347,7 @@ static int create_hist_fields(struct hist_trigger_data *hist_data,
 	if (ret)
 		goto out;
 
-	ret = create_var_fields(hist_data, file);
+	ret = create_var_fields(hist_data, file, remove);
 	if (ret)
 		goto out;
 
@@ -4773,7 +4784,7 @@ create_hist_data(unsigned int map_bits,
 	if (ret)
 		goto free;
 
-	ret = create_hist_fields(hist_data, file);
+	ret = create_hist_fields(hist_data, file, remove);
 	if (ret)
 		goto free;
 
