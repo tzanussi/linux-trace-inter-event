@@ -13,6 +13,9 @@
 #define TRACING_MAP_VARS_MAX		16
 #define TRACING_MAP_SORT_KEYS_MAX	2
 
+#define TRACING_MAP_INSERT		(1 << 0)
+#define TRACING_MAP_LOOKUP		(1 << 1)
+
 typedef int (*tracing_map_cmp_fn_t) (void *val_a, void *val_b);
 
 /*

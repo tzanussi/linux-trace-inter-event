@@ -519,7 +519,7 @@ static inline bool keys_match(void *key, void *test_key, unsigned key_size)
 }
 
 static inline struct tracing_map_elt *
-__tracing_map_insert(struct tracing_map *map, void *key, bool lookup_only)
+__tracing_map_insert(struct tracing_map *map, void *key, int flags)
 {
 	u32 idx, key_hash, test_key;
 	int dup_try = 0;
@@ -540,7 +540,7 @@ __tracing_map_insert(struct tracing_map *map, void *key, bool lookup_only)
 			val = READ_ONCE(entry->val);
 			if (val &&
 			    keys_match(key, val->key, map->key_size)) {
-				if (!lookup_only)
+				if (flags & TRACING_MAP_INSERT)
 					atomic64_inc(&map->hits);
 				return val;
 			} else if (unlikely(!val)) {
@@ -566,7 +566,7 @@ __tracing_map_insert(struct tracing_map *map, void *key, bool lookup_only)
 		}
 
 		if (!test_key) {
-			if (lookup_only)
+			if (!(flags & TRACING_MAP_INSERT))
 				break;
 
 			if (!cmpxchg(&entry->key, 0, key_hash)) {
@@ -639,7 +639,7 @@ __tracing_map_insert(struct tracing_map *map, void *key, bool lookup_only)
  */
 struct tracing_map_elt *tracing_map_insert(struct tracing_map *map, void *key)
 {
-	return __tracing_map_insert(map, key, false);
+	return __tracing_map_insert(map, key, TRACING_MAP_INSERT);
 }
 
 /**
@@ -661,7 +661,7 @@ struct tracing_map_elt *tracing_map_insert(struct tracing_map *map, void *key)
  */
 struct tracing_map_elt *tracing_map_lookup(struct tracing_map *map, void *key)
 {
-	return __tracing_map_insert(map, key, true);
+	return __tracing_map_insert(map, key, TRACING_MAP_LOOKUP);
 }
 
 /**
