@@ -1993,3 +1993,97 @@ hist trigger specification.
           Hits: 12970
           Entries: 2
           Dropped: 0
+
+  - delete(tag_name)
+
+    The 'delete(tag_name)' hist trigger action tries to delete the entry with
+    the same key from all the histograms which have the specified tag. All
+    such histograms should have keys which are compatible with the histogram
+    invoking the delete action.
+
+    Following example gives an idea of how it works. In this examples we are
+    only interested in the latency distribution of a particular process.
+
+    echo 'ping_xmit_latencies u64 q_to_start_xmit_lat; \
+    u64 start_xmit_to_xmit_lat; int pid' >> \
+    /sys/kernel/debug/tracing/synthetic_events
+
+    The following 3 commands are just setting up the usual onmatch action.
+    Note that all of them are tagged as ping_xmit and have the same key type.
+    The third command will invoke the onmatch action which will populate the
+    histogram corresponding to the synthetic event "ping_xmit_latencies":
+
+    echo \
+    'hist:tag=ping_xmit:keys=skbaddr.hex:ts0=common_timestamp.usecs:\
+    pid=common_pid if comm=="ping"' >> \
+    /sys/kernel/debug/tracing/events/net/net_dev_queue/trigger
+
+    echo \
+    'hist:tag=ping_xmit:keys=skbaddr.hex:ts1=common_timestamp.usecs:\
+    q_to_start_xmit=common_timestamp.usecs-$ts0 if comm=="ping"' >> \
+    /sys/kernel/debug/tracing/events/net/net_dev_start_xmit/trigger
+
+    echo \
+    'hist:tag=ping_xmit:keys=skbaddr.hex:ts2=common_timestamp.usecs:\
+    start_xmit_to_xmit=common_timestamp.usecs-$ts1:\
+    onmatch(net.net_dev_start_xmit).ping_xmit_latencies($q_to_start_xmit,\
+    $start_xmit_to_xmit,net.net_dev_queue.$pid) if comm=="ping"' >> \
+    /sys/kernel/debug/tracing/events/net/net_dev_xmit/trigger
+
+    The following command will delete the entry with the same skbaddr value as
+    the one invoked from all the histograms with tag ping_xmit (including
+    itself):
+
+    echo 'hist:tag=ping_xmit:keys=skbaddr.hex:delete(ping_xmit) \
+    if comm=="ping"' >> \
+    /sys/kernel/debug/tracing/events/net/net_dev_xmit/trigger
+
+    The latency distribution will be recorded by the following command:
+
+    echo 'hist:keys=pid,q_to_start_xmit_lat:sort=pid,q_to_start_xmit_lat' >> \
+    /sys/kernel/debug/tracing/events/synthetic/ping_xmit_latencies/trigger
+
+    echo \
+    'hist:keys=pid,start_xmit_to_xmit_lat:sort=pid,start_xmit_to_xmit_lat' >> \
+    /sys/kernel/debug/tracing/events/synthetic/ping_xmit_latencies/trigger
+
+    Output of the collected latency distribution data:
+
+    # event histogram
+    #
+    # trigger info:
+    hist:keys=pid,q_to_start_xmit_lat:vals=hitcount:sort=pid,q_to_start_xmit_lat:size=2048
+    [active]
+    #
+
+    { pid:        369, q_to_start_xmit_lat:          2 } hitcount:          1
+    { pid:        369, q_to_start_xmit_lat:          5 } hitcount:          1
+    { pid:        369, q_to_start_xmit_lat:          7 } hitcount:          1
+    { pid:        369, q_to_start_xmit_lat:         11 } hitcount:          1
+    { pid:        369, q_to_start_xmit_lat:         12 } hitcount:          1
+    { pid:        369, q_to_start_xmit_lat:         15 } hitcount:          1
+
+    Totals:
+    Hits: 6
+    Entries: 6
+    Dropped: 0
+    Deletes: 0
+
+    # event histogram
+    #
+    # trigger info:
+    hist:keys=pid,start_xmit_to_xmit_lat:vals=hitcount:sort=pid,start_xmit_to_xmit_lat:size=2048
+    [active]
+    #
+
+    { pid:        369, start_xmit_to_xmit_lat:          3 } hitcount:          2
+    { pid:        369, start_xmit_to_xmit_lat:          5 } hitcount:          1
+    { pid:        369, start_xmit_to_xmit_lat:          6 } hitcount:          1
+    { pid:        369, start_xmit_to_xmit_lat:          7 } hitcount:          1
+    { pid:        369, start_xmit_to_xmit_lat:          8 } hitcount:          1
+
+    Totals:
+    Hits: 6
+    Entries: 5
+    Dropped: 0
+    Deletes: 0
