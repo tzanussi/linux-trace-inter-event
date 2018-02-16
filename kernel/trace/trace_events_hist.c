@@ -1728,6 +1728,7 @@ static struct hist_field *find_event_var(struct hist_trigger_data *hist_data,
 struct hist_elt_data {
 	char *comm;
 	u64 *var_ref_vals;
+	unsigned long *var_ref_vals_map;
 	char *field_var_str[SYNTH_FIELDS_MAX];
 };
 
@@ -1740,13 +1741,21 @@ static u64 hist_field_var_ref(struct hist_field *hist_field,
 	u64 var_val = 0;
 
 	elt_data = elt->private_data;
-	var_val = elt_data->var_ref_vals[hist_field->var_ref_idx];
+
+	if (test_bit(hist_field->var_ref_idx, elt_data->var_ref_vals_map))
+		var_val = elt_data->var_ref_vals[hist_field->var_ref_idx];
+	else {
+		unsigned int var_idx = hist_field->var.idx;
+
+		var_val = tracing_map_read_var(elt, var_idx);
+	}
 
 	return var_val;
 }
 
 static bool resolve_var_refs(struct hist_trigger_data *hist_data, void *key,
-			     u64 *var_ref_vals, bool self)
+			     u64 *var_ref_vals,
+			     unsigned long *var_ref_vals_map, bool self)
 {
 	struct hist_trigger_data *var_data;
 	struct tracing_map_elt *var_elt;
@@ -1790,6 +1799,7 @@ static bool resolve_var_refs(struct hist_trigger_data *hist_data, void *key,
 		rcu_read_unlock();
 
 		var_ref_vals[i] = var_val;
+		set_bit(i, var_ref_vals_map);
 	}
 
 	return resolved;
@@ -4820,7 +4830,8 @@ create_hist_data(unsigned int map_bits,
 static void hist_trigger_elt_update(struct hist_trigger_data *hist_data,
 				    struct tracing_map_elt *elt, void *rec,
 				    struct ring_buffer_event *rbe,
-				    u64 *var_ref_vals)
+				    u64 *var_ref_vals,
+				    unsigned long *var_ref_vals_map)
 {
 	struct hist_elt_data *elt_data;
 	struct hist_field *hist_field;
@@ -4829,6 +4840,7 @@ static void hist_trigger_elt_update(struct hist_trigger_data *hist_data,
 
 	elt_data = elt->private_data;
 	elt_data->var_ref_vals = var_ref_vals;
+	elt_data->var_ref_vals_map = var_ref_vals_map;
 
 	for_each_hist_val_field(i, hist_data) {
 		hist_field = hist_data->fields[i];
@@ -4895,6 +4907,7 @@ static void event_hist_trigger(struct event_trigger_data *data, void *rec,
 			       struct ring_buffer_event *rbe)
 {
 	struct hist_trigger_data *hist_data = data->private_data;
+	DECLARE_BITMAP(var_ref_vals_map, TRACING_MAP_VARS_MAX);
 	bool use_compound_key = (hist_data->n_keys > 1);
 	unsigned long entries[HIST_STACKTRACE_DEPTH];
 	u64 var_ref_vals[TRACING_MAP_VARS_MAX];
@@ -4906,6 +4919,7 @@ static void event_hist_trigger(struct event_trigger_data *data, void *rec,
 	void *key = NULL;
 	unsigned int i;
 
+	bitmap_zero(var_ref_vals_map, TRACING_MAP_VARS_MAX);
 	memset(compound_key, 0, hist_data->key_size);
 
 	for_each_hist_key_field(i, hist_data) {
@@ -4938,7 +4952,7 @@ static void event_hist_trigger(struct event_trigger_data *data, void *rec,
 		key = compound_key;
 
 	if (hist_data->n_var_refs &&
-	    !resolve_var_refs(hist_data, key, var_ref_vals, false))
+	    !resolve_var_refs(hist_data, key, var_ref_vals, var_ref_vals_map, false))
 		return;
 
 	elt = tracing_map_insert(hist_data->map, key);
@@ -4946,9 +4960,9 @@ static void event_hist_trigger(struct event_trigger_data *data, void *rec,
 		return;
 
 	rcu_read_lock();
-	hist_trigger_elt_update(hist_data, elt, rec, rbe, var_ref_vals);
+	hist_trigger_elt_update(hist_data, elt, rec, rbe, var_ref_vals, var_ref_vals_map);
 
-	if (resolve_var_refs(hist_data, key, var_ref_vals, true))
+	if (resolve_var_refs(hist_data, key, var_ref_vals, var_ref_vals_map, true))
 		hist_trigger_actions(hist_data, elt, rec, rbe, var_ref_vals);
 	rcu_read_unlock();
 }
