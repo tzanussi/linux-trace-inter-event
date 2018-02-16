@@ -350,6 +350,10 @@ struct action_data {
 			struct hist_field	*max_var;
 			struct hist_field	*var;
 		} onmax;
+
+		struct {
+			struct list_head	tagged_hists;
+		} delete;
 	};
 };
 
@@ -1072,6 +1076,35 @@ static void remove_tagged_hist(struct hist_trigger_data *hist_data)
 	struct trace_array *tr = hist_data->event_file->tr;
 
 	__remove_tagged_hist(hist_data, tr, &tr->tagged_hists);
+}
+
+static void remove_tagged_hists(struct list_head *l)
+{
+	struct tagged_hist_data *tag_data, *t;
+
+	list_for_each_entry_safe(tag_data, t, l, list)
+		__remove_tagged_hist(tag_data->hist_data, NULL, l);
+}
+
+static void action_delete(struct hist_trigger_data *hist_data,
+			 struct tracing_map_elt *elt, void *rec,
+			 struct ring_buffer_event *rbe,
+			 struct action_data *data, u64 *var_ref_vals)
+{
+	struct list_head *l = &data->delete.tagged_hists;
+	struct tagged_hist_data *tag_data;
+
+	/*
+	 * tracing_map_delete makes changes to struct tracing_map_elt which
+	 * is being protected by the RCUs. So, end the read-side critical
+	 * section before entering tracing_map_delete().
+	 */
+	rcu_read_unlock();
+
+	list_for_each_entry(tag_data, l, list)
+		tracing_map_delete(tag_data->hist_data->map, elt->key);
+
+	rcu_read_lock();
 }
 
 struct hist_var_data {
@@ -1883,7 +1916,8 @@ static int parse_action(char *str, struct hist_trigger_attrs *attrs)
 		return ret;
 
 	if ((strncmp(str, "onmatch(", strlen("onmatch(")) == 0) ||
-	    (strncmp(str, "onmax(", strlen("onmax(")) == 0)) {
+	    (strncmp(str, "onmax(", strlen("onmax(")) == 0) ||
+	    (strncmp(str, "delete(", strlen("delete(")) == 0)) {
 		attrs->action_str[attrs->n_actions] = kstrdup(str, GFP_KERNEL);
 		if (!attrs->action_str[attrs->n_actions]) {
 			ret = -ENOMEM;
@@ -3600,6 +3634,18 @@ static void onmatch_destroy(struct action_data *data)
 	mutex_unlock(&synth_event_mutex);
 }
 
+static void delete_action_destroy(struct action_data *data)
+{
+	unsigned int i;
+
+	for (i = 0; i < data->n_params; i++)
+		kfree(data->params[i]);
+
+	remove_tagged_hists(&data->delete.tagged_hists);
+
+	kfree(data);
+}
+
 static void destroy_field_var(struct field_var *field_var)
 {
 	if (!field_var)
@@ -3737,6 +3783,38 @@ onmatch_create_field_var(struct hist_trigger_data *hist_data,
 	goto out;
 }
 
+static int delete_action_create(struct hist_trigger_data *hist_data,
+				struct action_data *data)
+{
+	struct trace_array *tr = hist_data->event_file->tr;
+	struct list_head *l = &data->delete.tagged_hists;
+	struct tagged_hist_data *tag_data;
+	int ret = 0;
+	char *tag;
+
+	list_for_each_entry(tag_data, &tr->tagged_hists, list) {
+		tag = tag_data->hist_data->attrs->tag;
+		if (strcmp(tag, data->params[0]) == 0) {
+			if (!compatible_keys(tag_data->hist_data, hist_data,
+					     hist_data->n_keys)) {
+				hist_err("delete: tagged hist trigger not compatible with delete hist trigger: ", data->params[0]);
+				ret = -EINVAL;
+				goto free;
+			}
+
+			ret = __save_tagged_hist(tag_data->hist_data, NULL, l);
+			if (ret)
+				goto free;
+		}
+	}
+ out:
+	return ret;
+ free:
+	remove_tagged_hists(l);
+
+	goto out;
+}
+
 static int onmatch_create(struct hist_trigger_data *hist_data,
 			  struct trace_event_file *file,
 			  struct action_data *data)
@@ -3833,6 +3911,41 @@ static int onmatch_create(struct hist_trigger_data *hist_data,
 	mutex_lock(&synth_event_mutex);
 	event->ref--;
 	mutex_unlock(&synth_event_mutex);
+
+	goto out;
+}
+
+static struct action_data *delete_action_parse(char *str)
+{
+	char *params;
+	struct action_data *data;
+	int ret = -EINVAL;
+
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	if (!data)
+		return ERR_PTR(-ENOMEM);
+
+	INIT_LIST_HEAD(&data->delete.tagged_hists);
+
+	params = strsep(&str, ")");
+	if (!params || !str || (str && strlen(str))) {
+		hist_err("delete: Missing closing paren: ", params);
+		goto free;
+	}
+
+	ret = parse_action_params(params, data);
+	if (ret)
+		goto free;
+
+	if (data->n_params != 1) {
+		ret = -EINVAL;
+		goto free;
+	}
+out:
+	return data;
+free:
+	delete_action_destroy(data);
+	data = ERR_PTR(ret);
 
 	goto out;
 }
@@ -4344,6 +4457,8 @@ static void destroy_actions(struct hist_trigger_data *hist_data)
 
 		if (data->fn == action_trace)
 			onmatch_destroy(data);
+		else if (data->fn == action_delete)
+			delete_action_destroy(data);
 		else if (data->fn == onmax_save)
 			onmax_destroy(data);
 		else
@@ -4380,6 +4495,15 @@ static int parse_actions(struct hist_trigger_data *hist_data)
 				break;
 			}
 			data->fn = onmax_save;
+		} else if (strncmp(str, "delete(", strlen("delete(")) == 0) {
+			char *action_str = str + strlen("delete(");
+
+			data = delete_action_parse(action_str);
+			if (IS_ERR(data)) {
+				ret = PTR_ERR(data);
+				break;
+			}
+			data->fn = action_delete;
 		} else {
 			ret = -EINVAL;
 			break;
@@ -4409,7 +4533,12 @@ static int create_actions(struct hist_trigger_data *hist_data,
 			ret = onmax_create(hist_data, data);
 			if (ret)
 				return ret;
+		} else if (data->fn == action_delete) {
+			ret = delete_action_create(hist_data, data);
+			if (ret)
+				return ret;
 		}
+
 	}
 
 	return ret;
@@ -4427,6 +4556,23 @@ static void print_actions(struct seq_file *m,
 		if (data->fn == onmax_save)
 			onmax_print(m, hist_data, elt, data);
 	}
+}
+
+static void print_delete_action_spec(struct seq_file *m,
+			     struct hist_trigger_data *hist_data,
+			     struct action_data *data)
+{
+	unsigned int i;
+
+	seq_puts(m, ":delete(");
+
+	for (i = 0; i < data->n_params; i++) {
+		if (i)
+			seq_puts(m, ",");
+		seq_printf(m, "%s", data->params[i]);
+	}
+
+	seq_puts(m, ")");
 }
 
 static void print_onmax_spec(struct seq_file *m,
@@ -4456,7 +4602,8 @@ static void print_onmatch_spec(struct seq_file *m,
 	seq_printf(m, ":onmatch(%s.%s).", data->onmatch.match_event_system,
 		   data->onmatch.match_event);
 
-	seq_printf(m, "%s(", data->onmatch.synth_event->name);
+	if (data->fn != action_delete)
+		seq_printf(m, "%s(", data->onmatch.synth_event->name);
 
 	for (i = 0; i < data->n_params; i++) {
 		if (i)
@@ -4479,6 +4626,8 @@ static void print_actions_spec(struct seq_file *m,
 			print_onmatch_spec(m, hist_data, data);
 		else if (data->fn == onmax_save)
 			print_onmax_spec(m, hist_data, data);
+		else if (data->fn == action_delete)
+			print_delete_action_spec(m, hist_data, data);
 	}
 }
 
@@ -4886,6 +5035,7 @@ static int print_entries(struct seq_file *m,
 			dropped_entries++;
 			continue;
 		}
+
 		hist_trigger_entry_print(m, hist_data,
 					 sort_entries[i]->key,
 					 sort_entries[i]->elt);
