@@ -1,0 +1,96 @@
+#!/bin/sh
+# description: event trigger - test delete action support
+
+
+do_reset() {
+    reset_trigger
+    echo > set_event
+    clear_trace
+}
+
+fail() { #msg
+    do_reset
+    echo $1
+    exit_fail
+}
+
+if [ ! -f set_event ]; then
+    echo "event tracing is not supported"
+    exit_unsupported
+fi
+
+if [ ! -f synthetic_events ]; then
+    echo "synthetic event is not supported"
+    exit_unsupported
+fi
+
+reset_tracer
+do_reset
+clear_synthetic_events
+
+#Single event delete hist entry:
+echo 'hist:keys=pid:tag=trig1:ts1=$common_timestamp.usecs if comm=="ping"' > events/sched/sched_waking/trigger
+echo 'hist:keys=pid:delete(trig1) if comm=="ping"' > events/sched/sched_wakeup/trigger
+ping localhost -c 5
+if ! grep -q "Entries: 0" events/sched/sched_waking/hist; then
+    fail "Failed to delete entry from histogram"
+fi
+
+reset_trigger
+
+#Multiple triggers in same event try deleting same hist entry:
+echo 'hist:keys=pid:tag=trig2:ts2=$common_timestamp.usecs if comm=="ping"' > events/sched/sched_waking/trigger
+echo 'hist:keys=pid:delete(trig2) if comm=="ping"' > events/sched/sched_wakeup/trigger
+echo 'hist:keys=pid:ts3=$common_timestamp.usecs:delete(trig2) if comm=="ping"' >> events/sched/sched_wakeup/trigger
+ping localhost -c 5
+if ! grep -q "Entries: 0" events/sched/sched_waking/hist; then
+    fail "Failed to delete entry from histogram"
+fi
+
+reset_trigger
+
+#Multiple events triggers try deleting same hist entry:
+echo 'hist:keys=pid:tag=trig3:ts3=$common_timestamp.usecs if comm=="ping"' > events/sched/sched_waking/trigger
+echo 'hist:keys=pid:delete(trig3) if comm=="ping"' > events/sched/sched_wakeup/trigger
+echo 'hist:keys=next_pid:delete(trig3) if next_comm=="ping"' > events/sched/sched_switch/trigger
+ping localhost -c 5
+if ! grep -q "Entries: 0" events/sched/sched_waking/hist; then
+    fail "Failed to delete entry from histogram"
+fi
+
+reset_trigger
+
+#Delete Histogram on which other trigger is dependent:
+echo 'hist:keys=pid:tag=trig4:ts4=$common_timestamp.usecs if comm=="ping"' > events/sched/sched_waking/trigger
+echo 'hist:keys=pid:waking_lat=$common_timestamp.usecs-$ts4 if comm=="ping"' > events/sched/sched_wakeup/trigger
+echo 'hist:keys=pid:delete(trig4):ts5=$common_timestamp.usecs if comm=="ping"' >> events/sched/sched_wakeup/trigger
+ping localhost -c 5
+if ! grep -q "Entries: 0" events/sched/sched_waking/hist; then
+    fail "Failed to delete entry from histogram"
+fi
+
+reset_trigger
+
+#delete with onmatch action:
+echo 'waking_latency  u64 lat pid_t pid' > synthetic_events
+echo 'hist:keys=pid:tag=trig5:ts5=$common_timestamp.usecs if comm=="ping"' > events/sched/sched_waking/trigger
+echo 'hist:keys=pid:waking_lat=$common_timestamp.usecs-$ts5:delete(trig5):onmatch(sched.sched_wakeup).waking_latency($waking_lat,pid) if comm=="ping"' > events/sched/sched_wakeup/trigger
+echo 'hist:keys=pid,lat:sort=pid,lat' > events/synthetic/waking_latency/trigger
+ping localhost -c 5
+if ! grep -q "Entries: 0" events/sched/sched_waking/hist; then
+    fail "Failed to delete entry from histogram with onmatch"
+fi
+
+reset_trigger
+
+#Multiple entries added/deleted simultaniously
+echo 'hist:keys=pid:tag=trig6:ts6=$common_timestamp.usecs' > events/sched/sched_waking/trigger
+echo 'hist:keys=pid:delete(trig6)' > events/sched/sched_wakeup/trigger
+ping localhost -c 5
+if ! grep -q "Entries: 0" events/sched/sched_waking/hist; then
+    fail "Failed to delete entry from histogram"
+fi
+
+do_reset
+
+exit 0
