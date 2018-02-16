@@ -2808,6 +2808,14 @@ static int event_hist_trigger_func(struct event_command *cmd_ops,
 				   struct trace_event_file *file,
 				   char *glob, char *cmd, char *param);
 
+static bool is_pointer_type(const char *type)
+{
+	if (type[strlen(type) - 1] == '*')
+		return true;
+
+	return false;
+}
+
 static bool compatible_keys(struct hist_trigger_data *target_hist_data,
 			    struct hist_trigger_data *hist_data,
 			    unsigned int n_keys)
@@ -2825,8 +2833,12 @@ static bool compatible_keys(struct hist_trigger_data *target_hist_data,
 		hist_field = hist_data->fields[i + n];
 		target_hist_field = target_hist_data->fields[j + n];
 
-		if (strcmp(hist_field->type, target_hist_field->type) != 0)
-			return false;
+		if (!is_pointer_type(hist_field->type) ||
+		    !is_pointer_type(target_hist_field->type)) {
+			    if (strcmp(hist_field->type, target_hist_field->type) != 0)
+				    return false;
+		}
+
 		if (hist_field->size != target_hist_field->size)
 			return false;
 		if (hist_field->is_signed != target_hist_field->is_signed)
