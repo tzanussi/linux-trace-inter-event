@@ -518,6 +518,45 @@ static inline bool keys_match(void *key, void *test_key, unsigned key_size)
 	return match;
 }
 
+static inline struct tracing_map_elt *search_entry(struct tracing_map *map,
+						   struct tracing_map_entry *entry,
+						   void *key,
+						   int flags,
+						   int idx,
+						   int *dup_try)
+{
+	struct tracing_map_elt *val = READ_ONCE(entry->val);
+	int deleting = READ_ONCE(entry->deleting);
+
+	if (val &&
+	    keys_match(key, val->key, map->key_size) &&
+	    !deleting) {
+		if (flags & TRACING_MAP_INSERT)
+			atomic64_inc(&map->hits);
+		return val;
+	} else if (unlikely(!val)) {
+		/*
+		 * The key is present. But, val (pointer to elt
+		 * struct) is still NULL. which means some other
+		 * thread is in the process of inserting an
+		 * element.
+		 *
+		 * On top of that, it's key_hash is same as the
+		 * one being inserted right now. So, it's
+		 * possible that the element has the same
+		 * key as well.
+		 */
+
+		*dup_try++;
+		if (*dup_try > map->map_size) {
+			atomic64_inc(&map->drops);
+			return NULL;
+		}
+		return ERR_PTR(-EAGAIN);
+	}
+
+}
+
 static inline struct tracing_map_elt *
 __tracing_map_insert(struct tracing_map *map, void *key, int flags)
 {
@@ -537,32 +576,12 @@ __tracing_map_insert(struct tracing_map *map, void *key, int flags)
 		test_key = entry->key;
 
 		if (test_key && test_key == key_hash) {
-			val = READ_ONCE(entry->val);
-			if (val &&
-			    keys_match(key, val->key, map->key_size)) {
-				if (flags & TRACING_MAP_INSERT)
-					atomic64_inc(&map->hits);
-				return val;
-			} else if (unlikely(!val)) {
-				/*
-				 * The key is present. But, val (pointer to elt
-				 * struct) is still NULL. which means some other
-				 * thread is in the process of inserting an
-				 * element.
-				 *
-				 * On top of that, it's key_hash is same as the
-				 * one being inserted right now. So, it's
-				 * possible that the element has the same
-				 * key as well.
-				 */
+			elt = search_entry(map, entry, key, flags, idx, &dup_try);
 
-				dup_try++;
-				if (dup_try > map->map_size) {
-					atomic64_inc(&map->drops);
-					break;
-				}
+			if (PTR_ERR(elt) == -EAGAIN)
 				continue;
-			}
+			else
+				return elt;
 		}
 
 		if (!test_key) {
