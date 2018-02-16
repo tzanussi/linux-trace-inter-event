@@ -15,6 +15,7 @@
 
 #define TRACING_MAP_INSERT		(1 << 0)
 #define TRACING_MAP_LOOKUP		(1 << 1)
+#define TRACING_MAP_DELETE		(1 << 2)
 
 typedef int (*tracing_map_cmp_fn_t) (void *val_a, void *val_b);
 
@@ -145,11 +146,15 @@ struct tracing_map_elt {
 	bool				*var_set;
 	void				*key;
 	void				*private_data;
+	int				idx; /* cached for free_elt() */
+	bool				deleted;
+	struct rcu_head                 rcu_head;
 };
 
 struct tracing_map_entry {
 	u32				key;
 	struct tracing_map_elt		*val;
+	bool				deleted;
 };
 
 struct tracing_map_sort_key {
@@ -201,6 +206,10 @@ struct tracing_map {
 	unsigned int			n_vars;
 	atomic64_t			hits;
 	atomic64_t			drops;
+	atomic64_t			deletes;
+	bool				has_freed_elts;
+	int				last_freed_elt;
+	bool				find_failed;
 };
 
 /**
@@ -260,6 +269,7 @@ extern struct tracing_map_elt *
 tracing_map_insert(struct tracing_map *map, void *key);
 extern struct tracing_map_elt *
 tracing_map_lookup(struct tracing_map *map, void *key);
+extern int tracing_map_delete(struct tracing_map *map, void *key);
 
 extern tracing_map_cmp_fn_t tracing_map_cmp_num(int field_size,
 						int field_is_signed);

@@ -376,6 +376,8 @@ static void tracing_map_elt_clear(struct tracing_map_elt *elt)
 
 	if (elt->map->ops && elt->map->ops->elt_clear)
 		elt->map->ops->elt_clear(elt);
+
+	memset(elt->key, 0, elt->map->key_size);
 }
 
 static void tracing_map_elt_init_fields(struct tracing_map_elt *elt)
@@ -455,19 +457,71 @@ static struct tracing_map_elt *tracing_map_elt_alloc(struct tracing_map *map)
 	return ERR_PTR(err);
 }
 
+static struct tracing_map_elt *find_free_elt(struct tracing_map *map)
+{
+	struct tracing_map_elt *elt;
+	int i, idx;
+
+	/* Most of the time, this will be claimed */
+	idx = map->last_freed_elt;
+
+	elt = *(TRACING_MAP_ELT(map->elts, idx));
+	if (cmpxchg(&elt->deleted, 1, 0))
+		return elt;
+
+	for (i = 0; i < map->max_elts; i++) {
+		elt = *(TRACING_MAP_ELT(map->elts, i));
+		if (cmpxchg(&elt->deleted, 1, 0))
+			return elt;
+	}
+
+	/* We want to avoid doing this search more than once.  If it
+	 * fails once, it means that we used up all the elements and
+	 * they're not being replenished fast enough for the usage -
+	 * better to fail (start dropping) and start over with a
+	 * bigger size.
+	 */
+	map->find_failed = true;
+
+	return NULL;
+}
+
 static struct tracing_map_elt *get_free_elt(struct tracing_map *map)
 {
 	struct tracing_map_elt *elt = NULL;
 	int idx;
 
 	idx = atomic_inc_return(&map->next_elt);
+
+	/* First use elts in order, until they're all used used.  In
+	 * the normal (non-delete) case, this is the end of story and
+	 * we run out (producing drops).  Only if there have been
+	 * deletes do we bother with the potentially more expensive
+	 * find_free_elt() branch.
+	 */
 	if (idx < map->max_elts) {
 		elt = *(TRACING_MAP_ELT(map->elts, idx));
 		if (map->ops && map->ops->elt_init)
 			map->ops->elt_init(elt);
-	}
+	} else if (map->has_freed_elts && !map->find_failed)
+		elt = find_free_elt(map);
 
 	return elt;
+}
+
+static void free_elt(struct rcu_head *rcu_head)
+{
+	struct tracing_map_elt *elt = container_of(rcu_head,
+						   struct tracing_map_elt,
+						   rcu_head);
+	struct tracing_map *map = elt->map;
+
+	tracing_map_elt_clear(elt);
+
+	map->last_freed_elt = elt->idx;
+	map->has_freed_elts = true;
+	elt->deleted = 1;
+	atomic64_inc(&map->deletes);
 }
 
 static void tracing_map_free_elts(struct tracing_map *map)
@@ -503,6 +557,8 @@ static int tracing_map_alloc_elts(struct tracing_map *map)
 
 			return -ENOMEM;
 		}
+
+		(*(TRACING_MAP_ELT(map->elts, i)))->idx = i;
 	}
 
 	return 0;
@@ -518,7 +574,29 @@ static inline bool keys_match(void *key, void *test_key, unsigned key_size)
 	return match;
 }
 
-static inline struct tracing_map_elt *search_entry(struct tracing_map *map,
+static struct tracing_map_elt *delete_entry(struct tracing_map *map,
+				     struct tracing_map_entry *entry)
+{
+	struct tracing_map_elt *val = READ_ONCE(entry->val);
+
+	/*
+	 * If this fails, someone else deleted it.
+	 */
+	if (!cmpxchg(&entry->deleted, 0, 1)) {
+		rcu_assign_pointer(entry->val, NULL);
+		call_rcu(&val->rcu_head,
+			 free_elt);
+		entry->key = 0;
+		/*
+		 * pointer unuseable if deleted, only returned for non-NULL
+		 * test in tracing_map_delete()
+		 */
+		return val;
+	}
+	return NULL;
+}
+
+static inline struct tracing_map_elt *compare_entry(struct tracing_map *map,
 						   struct tracing_map_entry *entry,
 						   void *key,
 						   int flags,
@@ -526,14 +604,21 @@ static inline struct tracing_map_elt *search_entry(struct tracing_map *map,
 						   int *dup_try)
 {
 	struct tracing_map_elt *val = READ_ONCE(entry->val);
-	int deleting = READ_ONCE(entry->deleting);
+	int deleted = READ_ONCE(entry->deleted);
 
 	if (val &&
 	    keys_match(key, val->key, map->key_size) &&
-	    !deleting) {
+	    !deleted) {
 		if (flags & TRACING_MAP_INSERT)
 			atomic64_inc(&map->hits);
-		return val;
+
+		if (flags & TRACING_MAP_DELETE)
+			return delete_entry(map, entry);
+
+		if (flags & TRACING_MAP_LOOKUP)
+			return rcu_dereference(val);
+		else
+			return val;
 	} else if (unlikely(!val)) {
 		/*
 		 * The key is present. But, val (pointer to elt
@@ -547,7 +632,7 @@ static inline struct tracing_map_elt *search_entry(struct tracing_map *map,
 		 * key as well.
 		 */
 
-		*dup_try++;
+		*dup_try = *dup_try + 1;
 		if (*dup_try > map->map_size) {
 			atomic64_inc(&map->drops);
 			return NULL;
@@ -555,6 +640,34 @@ static inline struct tracing_map_elt *search_entry(struct tracing_map *map,
 		return ERR_PTR(-EAGAIN);
 	}
 
+	if (deleted && val) {
+		*dup_try = *dup_try + 1;
+		return ERR_PTR(-EAGAIN);
+	}
+
+	return NULL;
+}
+
+
+static inline struct tracing_map_elt *find_entry(struct tracing_map *map,
+						 void *key,
+						 u32 key_hash,
+						 int flags,
+						 int idx_iter,
+						 int *dup_try)
+{
+	struct tracing_map_entry *entry = TRACING_MAP_ENTRY(map->map, idx_iter);
+
+	while (entry->key || entry->deleted) {
+		if (entry->key == key_hash) {
+			return compare_entry(map, entry, key, flags, idx_iter,
+					     dup_try);
+		}
+		idx_iter = (idx_iter + 1) & (map->map_size - 1);
+		entry = TRACING_MAP_ENTRY(map->map, idx_iter);
+	}
+
+	return NULL;
 }
 
 static inline struct tracing_map_elt *
@@ -563,7 +676,7 @@ __tracing_map_insert(struct tracing_map *map, void *key, int flags)
 	u32 idx, key_hash, test_key;
 	int dup_try = 0;
 	struct tracing_map_entry *entry;
-	struct tracing_map_elt *val;
+	struct tracing_map_elt *elt;
 
 	key_hash = jhash(key, map->key_size, 0);
 	if (key_hash == 0)
@@ -573,18 +686,28 @@ __tracing_map_insert(struct tracing_map *map, void *key, int flags)
 	while (1) {
 		idx &= (map->map_size - 1);
 		entry = TRACING_MAP_ENTRY(map->map, idx);
-		test_key = entry->key;
+		test_key = READ_ONCE(entry->key);
 
 		if (test_key && test_key == key_hash) {
-			elt = search_entry(map, entry, key, flags, idx, &dup_try);
-
+			elt = compare_entry(map, entry, key, flags, idx, &dup_try);
 			if (PTR_ERR(elt) == -EAGAIN)
 				continue;
-			else
-				return elt;
+			return elt;
 		}
 
 		if (!test_key) {
+			if (entry->deleted) {
+				int idx_iter = (idx + 1) & (map->map_size - 1);
+
+				elt = find_entry(map, key, key_hash, flags,
+						 idx_iter, &dup_try);
+
+				if (PTR_ERR(elt) == -EAGAIN)
+					continue;
+				else if (elt)
+					return elt;
+			}
+
 			if (!(flags & TRACING_MAP_INSERT))
 				break;
 
@@ -599,7 +722,8 @@ __tracing_map_insert(struct tracing_map *map, void *key, int flags)
 				}
 
 				memcpy(elt->key, key, map->key_size);
-				entry->val = elt;
+				entry->deleted = 0;
+				rcu_assign_pointer(entry->val, elt);
 				atomic64_inc(&map->hits);
 
 				return entry->val;
@@ -684,6 +808,24 @@ struct tracing_map_elt *tracing_map_lookup(struct tracing_map *map, void *key)
 }
 
 /**
+ * tracing_map_delete - Delete an element from tracing_map
+ * @map: The tracing_map to perform the delete on
+ * @key: The key to delete
+ *
+ * Tries to delete a key from tracing_map. Returns -EINVAL if it fails.
+ */
+int tracing_map_delete(struct tracing_map *map, void *key)
+{
+	struct tracing_map_elt *val = __tracing_map_insert(map, key,
+							   TRACING_MAP_DELETE);
+
+	if (val)
+		return 0;
+	else
+		return -EINVAL;
+}
+
+/**
  * tracing_map_destroy - Destroy a tracing_map
  * @map: The tracing_map to destroy
  *
@@ -722,6 +864,8 @@ void tracing_map_clear(struct tracing_map *map)
 	atomic_set(&map->next_elt, -1);
 	atomic64_set(&map->hits, 0);
 	atomic64_set(&map->drops, 0);
+	atomic64_set(&map->deletes, 0);
+	map->find_failed = false;
 
 	tracing_map_array_clear(map->map);
 
@@ -952,6 +1096,7 @@ void tracing_map_destroy_sort_entries(struct tracing_map_sort_entry **entries,
 				      unsigned int n_entries)
 {
 	unsigned int i;
+	rcu_read_unlock();
 
 	for (i = 0; i < n_entries; i++)
 		destroy_sort_entry(entries[i]);
@@ -964,7 +1109,7 @@ create_sort_entry(void *key, struct tracing_map_elt *elt)
 {
 	struct tracing_map_sort_entry *sort_entry;
 
-	sort_entry = kzalloc(sizeof(*sort_entry), GFP_KERNEL);
+	sort_entry = kzalloc(sizeof(*sort_entry), GFP_NOWAIT);
 	if (!sort_entry)
 		return NULL;
 
@@ -1098,12 +1243,14 @@ int tracing_map_sort_entries(struct tracing_map *map,
 	if (!entries)
 		return -ENOMEM;
 
+	rcu_read_lock();
+
 	for (i = 0, n_entries = 0; i < map->map_size; i++) {
 		struct tracing_map_entry *entry;
 
 		entry = TRACING_MAP_ENTRY(map->map, i);
 
-		if (!entry->key || !entry->val)
+		if (!entry->key || !entry->val || entry->deleted)
 			continue;
 
 		entries[n_entries] = create_sort_entry(entry->val->key,
@@ -1148,6 +1295,5 @@ int tracing_map_sort_entries(struct tracing_map *map,
 	return n_entries;
  free:
 	tracing_map_destroy_sort_entries(entries, n_entries);
-
 	return ret;
 }

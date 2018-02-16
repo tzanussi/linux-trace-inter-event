@@ -1731,13 +1731,16 @@ static bool resolve_var_refs(struct hist_trigger_data *hist_data, void *key,
 		    (!self && var_data == hist_data))
 			continue;
 
+		rcu_read_lock();
 		var_elt = tracing_map_lookup(var_data->map, key);
 		if (!var_elt) {
+			rcu_read_unlock();
 			resolved = false;
 			break;
 		}
 
 		if (!tracing_map_var_set(var_elt, var_idx)) {
+			rcu_read_unlock();
 			resolved = false;
 			break;
 		}
@@ -1746,6 +1749,7 @@ static bool resolve_var_refs(struct hist_trigger_data *hist_data, void *key,
 			var_val = tracing_map_read_var(var_elt, var_idx);
 		else
 			var_val = tracing_map_read_var_once(var_elt, var_idx);
+		rcu_read_unlock();
 
 		var_ref_vals[i] = var_val;
 	}
@@ -4733,10 +4737,12 @@ static void event_hist_trigger(struct event_trigger_data *data, void *rec,
 	if (!elt)
 		return;
 
+	rcu_read_lock();
 	hist_trigger_elt_update(hist_data, elt, rec, rbe, var_ref_vals);
 
 	if (resolve_var_refs(hist_data, key, var_ref_vals, true))
 		hist_trigger_actions(hist_data, elt, rec, rbe, var_ref_vals);
+	rcu_read_unlock();
 }
 
 static void hist_trigger_stacktrace_print(struct seq_file *m,
@@ -4866,7 +4872,7 @@ static int print_entries(struct seq_file *m,
 {
 	struct tracing_map_sort_entry **sort_entries = NULL;
 	struct tracing_map *map = hist_data->map;
-	int i, n_entries;
+	int i, n_entries, dropped_entries = 0;
 
 	n_entries = tracing_map_sort_entries(map, hist_data->sort_keys,
 					     hist_data->n_sort_keys,
@@ -4874,14 +4880,21 @@ static int print_entries(struct seq_file *m,
 	if (n_entries < 0)
 		return n_entries;
 
-	for (i = 0; i < n_entries; i++)
+	for (i = 0; i < n_entries; i++) {
+		if (sort_entries[i]->elt->deleted) {
+			rcu_dereference(sort_entries[i]->elt);
+			dropped_entries++;
+			continue;
+		}
 		hist_trigger_entry_print(m, hist_data,
 					 sort_entries[i]->key,
 					 sort_entries[i]->elt);
+	}
 
-	tracing_map_destroy_sort_entries(sort_entries, n_entries);
+	if (n_entries)
+		tracing_map_destroy_sort_entries(sort_entries, n_entries);
 
-	return n_entries;
+	return n_entries - dropped_entries;
 }
 
 static void hist_trigger_show(struct seq_file *m,
@@ -4902,9 +4915,10 @@ static void hist_trigger_show(struct seq_file *m,
 	if (n_entries < 0)
 		n_entries = 0;
 
-	seq_printf(m, "\nTotals:\n    Hits: %llu\n    Entries: %u\n    Dropped: %llu\n",
+	seq_printf(m, "\nTotals:\n    Hits: %llu\n    Entries: %d\n    Dropped: %llu\n    Deletes: %llu\n",
 		   (u64)atomic64_read(&hist_data->map->hits),
-		   n_entries, (u64)atomic64_read(&hist_data->map->drops));
+		   n_entries, (u64)atomic64_read(&hist_data->map->drops),
+		   (u64)atomic64_read(&hist_data->map->deletes));
 }
 
 static int hist_show(struct seq_file *m, void *v)
