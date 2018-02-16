@@ -256,6 +256,7 @@ struct hist_trigger_attrs {
 	unsigned int	n_actions;
 
 	struct var_defs	var_defs;
+	char		*tag;
 };
 
 struct field_var {
@@ -992,6 +993,85 @@ static void action_trace(struct hist_trigger_data *hist_data,
 	struct synth_event *event = data->onmatch.synth_event;
 
 	trace_synth(event, var_ref_vals, data->onmatch.var_ref_idx);
+}
+
+struct tagged_hist_data {
+	struct list_head list;
+	struct hist_trigger_data *hist_data;
+};
+
+static struct tagged_hist_data *
+find_tagged_hist(struct hist_trigger_data *hist_data, struct list_head *l)
+{
+	struct tagged_hist_data *tag_data, *found = NULL;
+
+	list_for_each_entry(tag_data, l, list) {
+		if (tag_data->hist_data == hist_data) {
+			found = tag_data;
+			break;
+		}
+	}
+
+	return found;
+}
+
+static int __save_tagged_hist(struct hist_trigger_data *hist_data,
+			      struct trace_array *tr,
+			      struct list_head *l)
+{
+	struct tagged_hist_data *tag_data;
+
+	tag_data = find_tagged_hist(hist_data, l);
+	if (tag_data)
+		return 0;
+
+	if (tr && trace_array_get(tr) < 0)
+		return -ENODEV;
+
+	tag_data = kzalloc(sizeof(*tag_data), GFP_KERNEL);
+	if (!tag_data) {
+		if (tr)
+			trace_array_put(tr);
+		return -ENOMEM;
+	}
+	tag_data->hist_data = hist_data;
+
+	list_add(&tag_data->list, l);
+
+	return 0;
+}
+
+static int save_tagged_hist(struct hist_trigger_data *hist_data)
+{
+	struct trace_array *tr = hist_data->event_file->tr;
+
+	return __save_tagged_hist(hist_data, tr, &tr->tagged_hists);
+}
+
+static void __remove_tagged_hist(struct hist_trigger_data *hist_data,
+				 struct trace_array *tr,
+				 struct list_head *l)
+{
+	struct tagged_hist_data *tag_data;
+
+	tag_data = find_tagged_hist(hist_data, l);
+
+	if (!tag_data)
+		return;
+
+	list_del(&tag_data->list);
+
+	kfree(tag_data);
+
+	if (tr)
+		trace_array_put(tr);
+}
+
+static void remove_tagged_hist(struct hist_trigger_data *hist_data)
+{
+	struct trace_array *tr = hist_data->event_file->tr;
+
+	__remove_tagged_hist(hist_data, tr, &tr->tagged_hists);
 }
 
 struct hist_var_data {
@@ -1864,6 +1944,13 @@ static int parse_assignment(char *str, struct hist_trigger_attrs *attrs)
 			goto out;
 		}
 		attrs->map_bits = map_bits;
+	} else if (strncmp(str, "tag=", strlen("tag=")) == 0) {
+		strsep(&str, "=");
+		attrs->tag = kstrdup(str, GFP_KERNEL);
+		if (!attrs->tag) {
+			ret = -ENOMEM;
+			goto out;
+		}
 	} else {
 		char *assignment;
 
@@ -4902,6 +4989,9 @@ static int event_hist_trigger_print(struct seq_file *m,
 	if (data->name)
 		seq_printf(m, "%s:", data->name);
 
+	if (hist_data->attrs->tag)
+		seq_printf(m, "tag=%s:", hist_data->attrs->tag);
+
 	seq_puts(m, "keys=");
 
 	for_each_hist_key_field(i, hist_data) {
@@ -5041,6 +5131,7 @@ static void event_hist_trigger_free(struct event_trigger_ops *ops,
 		trigger_data_free(data);
 
 		remove_hist_vars(hist_data);
+		remove_tagged_hist(hist_data);
 
 		unregister_field_var_hists(hist_data);
 
@@ -5558,6 +5649,9 @@ static int event_hist_trigger_func(struct event_command *cmd_ops,
 	if (has_hist_vars(hist_data))
 		save_hist_vars(hist_data);
 
+	if (attrs->tag)
+		save_tagged_hist(hist_data);
+
 	ret = create_actions(hist_data, file);
 	if (ret)
 		goto out_unreg;
@@ -5591,6 +5685,7 @@ enable:
 		cmd_ops->set_filter(NULL, trigger_data, NULL);
 
 	remove_hist_vars(hist_data);
+	remove_tagged_hist(hist_data);
 
 	kfree(trigger_data);
 

@@ -275,6 +275,7 @@ struct trace_array {
 #endif
 	int			time_stamp_abs_ref;
 	struct list_head	hist_vars;
+	struct list_head	tagged_hists;
 };
 
 enum {
