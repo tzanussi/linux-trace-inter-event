@@ -5713,12 +5713,34 @@ static bool hist_file_check_refs(struct trace_event_file *file)
 	return false;
 }
 
+static void hist_unreg_one(struct hist_trigger_data *hist_data,
+			   struct event_trigger_data *trigger,
+			   struct trace_event_file *file)
+{
+	struct synth_event *se;
+	const char *se_name;
+
+	list_del_rcu(&trigger->list);
+	trace_event_trigger_enable_disable(file, 0);
+
+	mutex_lock(&synth_event_mutex);
+	se_name = trace_event_name(file->event_call);
+	se = find_synth_event(se_name);
+	if (se)
+		se->ref--;
+	mutex_unlock(&synth_event_mutex);
+
+	update_cond_flag(file);
+	if (hist_data->enable_timestamps)
+		tracing_set_time_stamp_abs(file->tr, false);
+	if (trigger->ops->free)
+		trigger->ops->free(trigger->ops, trigger);
+}
+
 static void hist_unreg_all(struct trace_event_file *file)
 {
 	struct event_trigger_data *test, *n;
 	struct hist_trigger_data *hist_data;
-	struct synth_event *se;
-	const char *se_name;
 
 	if (hist_file_check_refs(file))
 		return;
@@ -5726,23 +5748,53 @@ static void hist_unreg_all(struct trace_event_file *file)
 	list_for_each_entry_safe(test, n, &file->triggers, list) {
 		if (test->cmd_ops->trigger_type == ETT_EVENT_HIST) {
 			hist_data = test->private_data;
-			list_del_rcu(&test->list);
-			trace_event_trigger_enable_disable(file, 0);
-
-			mutex_lock(&synth_event_mutex);
-			se_name = trace_event_name(file->event_call);
-			se = find_synth_event(se_name);
-			if (se)
-				se->ref--;
-			mutex_unlock(&synth_event_mutex);
-
-			update_cond_flag(file);
-			if (hist_data->enable_timestamps)
-				tracing_set_time_stamp_abs(file->tr, false);
-			if (test->ops->free)
-				test->ops->free(test->ops, test);
+			hist_unreg_one(hist_data, test, file);
 		}
 	}
+}
+
+static void hist_unreg(struct hist_trigger_data *hist_data)
+{
+	struct trace_event_file *file = hist_data->event_file;
+	struct event_trigger_data *test, *n;
+
+	list_for_each_entry_safe(test, n, &file->triggers, list) {
+		if (test->cmd_ops->trigger_type == ETT_EVENT_HIST) {
+			if (test->private_data == hist_data)
+				hist_unreg_one(hist_data, test, file);
+		}
+	}
+}
+
+static int remove_all_tagged_hists(struct trace_event_file *file, char *str)
+{
+	struct tagged_hist_data *tag_data, *t;
+	struct hist_trigger_data *hist_data;
+	struct trace_array *tr = file->tr;
+	char *tag, *remove_tag;
+	int ret = 0;
+
+	remove_tag = strsep(&str, ")");
+	if (!remove_tag || !str || (str && strlen(str))) {
+		hist_err("removeall: Missing closing paren: ", remove_tag);
+		return -EINVAL;
+	}
+
+	list_for_each_entry_safe(tag_data, t, &tr->tagged_hists, list) {
+		tag = tag_data->hist_data->attrs->tag;
+		if (strcmp(tag, remove_tag) == 0) {
+			hist_data = tag_data->hist_data;
+			if (check_var_refs(hist_data)) {
+				ret = -EBUSY;
+				goto out;
+			}
+
+			remove_tagged_hist(hist_data);
+			hist_unreg(hist_data);
+		}
+	}
+ out:
+	return ret;
 }
 
 static int event_hist_trigger_func(struct event_command *cmd_ops,
@@ -5768,6 +5820,8 @@ static int event_hist_trigger_func(struct event_command *cmd_ops,
 	if (!param)
 		return -EINVAL;
 
+	if (strncmp(param, "removeall(", strlen("removeall(")) == 0)
+		return remove_all_tagged_hists(file, param + strlen("removeall("));
 	if (glob[0] == '!')
 		remove = true;
 

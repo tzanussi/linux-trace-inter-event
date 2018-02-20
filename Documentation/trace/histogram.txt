@@ -23,7 +23,7 @@
 
         hist:keys=<field1[,field2,...]>[:values=<field1[,field2,...]>]
           [:sort=<field1[,field2,...]>][:size=#entries][:pause][:continue]
-          [:clear][:name=histname1] [if <filter>]
+          [:clear][:name=histname1][:tag=histtag1] [if <filter>]
 
   When a matching event is hit, an entry is added to a hash table
   using the key(s) and value(s) named.  Keys and values correspond to
@@ -207,6 +207,35 @@
     # cat /sys/kernel/debug/tracing/events/sched/sched_wakeup/hist
     ERROR: Couldn't yyy: zzz
       Last command: xxx
+
+  Hist trigger management
+  -----------------------
+
+  In many cases it takes multiple triggers working together to
+  implement a useful task.  For example, a latency or set of related
+  latencies is typically implemented using hist triggers defined on
+  multiple events.  'tags' can be used to group hist triggers together
+  and perform certain operations on the group.  The format of the
+  'tag' specifier is:
+
+    hist:tag=xxx:... >> event_file/trigger
+
+  Tags can be defined anywhere within the hist trigger (currently, a
+  trigger can only define one tag).
+
+  All hist triggers having a given tag can be removed at the same time
+  by using the 'removeall' hist command and specifying a tag name:
+
+    hist:removeall(tagname) >> event_file/trigger
+
+  Any file with a hist trigger matching the given tag can be used as
+  the target of the removeall command - all hist triggers with the
+  matching tagname will be removed, regardless of which event file
+  they belong to.  If a tagged trigger can't be removed because it's
+  busy (-EBUSY), removeall will stop removing matching triggers at
+  that point, but any matching trigger that has already been removed
+  by the command will remain removed.
+
 
 6.2 'hist' trigger examples
 ---------------------------
