@@ -114,8 +114,8 @@ static void __fuse_put_request(struct fuse_req *req)
 
 static bool fuse_req_init_context(struct fuse_conn *fc, struct fuse_req *req)
 {
-	req->in.h.uid = from_kuid(&init_user_ns, current_fsuid());
-	req->in.h.gid = from_kgid(&init_user_ns, current_fsgid());
+	req->in.h.uid = from_kuid(fc->user_ns, current_fsuid());
+	req->in.h.gid = from_kgid(fc->user_ns, current_fsgid());
 	req->in.h.pid = pid_nr_ns(task_pid(current), fc->pid_ns);
 
 	return (req->in.h.uid != ((uid_t)-1)) && (req->in.h.gid != ((gid_t)-1));
