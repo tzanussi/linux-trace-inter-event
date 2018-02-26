@@ -3400,6 +3400,36 @@ create_target_field_var(struct hist_trigger_data *target_hist_data,
 	return create_field_var(target_hist_data, file, var_name);
 }
 
+static bool update_max_val(struct tracing_map_elt *elt,
+			   struct action_data *data, u64 *var_ref_vals)
+{
+	unsigned int max_idx = data->onmax.max_var->var.idx;
+	unsigned int max_var_ref_idx = data->onmax.max_var_ref_idx;
+
+	u64 var_val, max_val;
+
+	var_val = var_ref_vals[max_var_ref_idx];
+	max_val = tracing_map_read_var(elt, max_idx);
+
+	if (var_val <= max_val)
+		return false;
+
+	tracing_map_set_var(elt, max_idx, var_val);
+
+	return true;
+}
+
+static void onmax_snapshot(struct hist_trigger_data *hist_data,
+			   struct tracing_map_elt *elt, void *rec,
+			   struct ring_buffer_event *rbe,
+			   struct action_data *data, u64 *var_ref_vals)
+{
+	bool updated = update_max_val(elt, data, var_ref_vals);
+
+	if (updated)
+		tracing_snapshot();
+}
+
 static void onmax_print(struct seq_file *m,
 			struct hist_trigger_data *hist_data,
 			struct tracing_map_elt *elt,
@@ -3408,6 +3438,9 @@ static void onmax_print(struct seq_file *m,
 	unsigned int i, save_var_idx, max_idx = data->onmax.max_var->var.idx;
 
 	seq_printf(m, "\n\tmax: %10llu", tracing_map_read_var(elt, max_idx));
+
+	if (data->fn == onmax_snapshot)
+		return;
 
 	for (i = 0; i < hist_data->n_max_vars; i++) {
 		struct hist_field *save_val = hist_data->max_vars[i]->val;
@@ -3431,18 +3464,7 @@ static void onmax_save(struct hist_trigger_data *hist_data,
 		       struct ring_buffer_event *rbe,
 		       struct action_data *data, u64 *var_ref_vals)
 {
-	unsigned int max_idx = data->onmax.max_var->var.idx;
-	unsigned int max_var_ref_idx = data->onmax.max_var_ref_idx;
-
-	u64 var_val, max_val;
-
-	var_val = var_ref_vals[max_var_ref_idx];
-	max_val = tracing_map_read_var(elt, max_idx);
-
-	if (var_val <= max_val)
-		return;
-
-	tracing_map_set_var(elt, max_idx, var_val);
+	update_max_val(elt, data, var_ref_vals);
 
 	update_max_vars(hist_data, elt, rbe, rec);
 }
@@ -3502,7 +3524,6 @@ static int onmax_create(struct hist_trigger_data *hist_data,
 	ref_field->var_ref_idx = hist_data->n_var_refs++;
 	data->onmax.var = ref_field;
 
-	data->fn = onmax_save;
 	data->onmax.max_var_ref_idx = var_ref_idx;
 	max_var = create_var(hist_data, file, "max", sizeof(u64), "u64");
 	if (IS_ERR(max_var)) {
@@ -3511,6 +3532,11 @@ static int onmax_create(struct hist_trigger_data *hist_data,
 		goto out;
 	}
 	data->onmax.max_var = max_var;
+
+	if (data->fn == onmax_snapshot) {
+		ret = tracing_alloc_snapshot();
+		goto out;
+	}
 
 	for (i = 0; i < data->n_params; i++) {
 		param = kstrdup(data->params[i], GFP_KERNEL);
@@ -3530,7 +3556,6 @@ static int onmax_create(struct hist_trigger_data *hist_data,
 		hist_data->max_vars[hist_data->n_max_vars++] = field_var;
 		if (field_var->val->flags & HIST_FIELD_FL_STRING)
 			hist_data->n_max_var_str++;
-
 		kfree(param);
 	}
  out:
@@ -3612,6 +3637,15 @@ static struct action_data *onmax_parse(char *str)
 		ret = parse_action_params(params, data);
 		if (ret)
 			goto free;
+		data->fn = onmax_save;
+	} else if (strncmp(onmax_fn_name, "snapshot", strlen("snapshot")) == 0) {
+		char *params = strsep(&str, ")");
+
+		if (!params) {
+			ret = -EINVAL;
+			goto free;
+		}
+		data->fn = onmax_snapshot;
 	} else
 		goto free;
 
@@ -4481,7 +4515,7 @@ static void destroy_actions(struct hist_trigger_data *hist_data)
 			onmatch_destroy(data);
 		else if (data->fn == action_delete)
 			delete_action_destroy(data);
-		else if (data->fn == onmax_save)
+		else if (data->fn == onmax_save || data->fn == onmax_snapshot)
 			onmax_destroy(data);
 		else
 			kfree(data);
@@ -4516,7 +4550,6 @@ static int parse_actions(struct hist_trigger_data *hist_data)
 				ret = PTR_ERR(data);
 				break;
 			}
-			data->fn = onmax_save;
 		} else if (strncmp(str, "delete(", strlen("delete(")) == 0) {
 			char *action_str = str + strlen("delete(");
 
@@ -4551,7 +4584,7 @@ static int create_actions(struct hist_trigger_data *hist_data,
 			ret = onmatch_create(hist_data, file, data);
 			if (ret)
 				return ret;
-		} else if (data->fn == onmax_save) {
+		} else if (data->fn == onmax_save || data->fn == onmax_snapshot) {
 			ret = onmax_create(hist_data, data);
 			if (ret)
 				return ret;
@@ -4575,7 +4608,7 @@ static void print_actions(struct seq_file *m,
 	for (i = 0; i < hist_data->n_actions; i++) {
 		struct action_data *data = hist_data->actions[i];
 
-		if (data->fn == onmax_save)
+		if (data->fn == onmax_save || data->fn == onmax_snapshot)
 			onmax_print(m, hist_data, elt, data);
 	}
 }
@@ -4607,10 +4640,12 @@ static void print_onmax_spec(struct seq_file *m,
 	seq_printf(m, "%s", data->onmax.var_str);
 	seq_printf(m, ").%s(", data->onmax.fn_name);
 
-	for (i = 0; i < hist_data->n_max_vars; i++) {
-		seq_printf(m, "%s", hist_data->max_vars[i]->var->var.name);
-		if (i < hist_data->n_max_vars - 1)
-			seq_puts(m, ",");
+	if (data->fn == onmax_save) {
+		for (i = 0; i < hist_data->n_max_vars; i++) {
+			seq_printf(m, "%s", hist_data->max_vars[i]->var->var.name);
+			if (i < hist_data->n_max_vars - 1)
+				seq_puts(m, ",");
+		}
 	}
 	seq_puts(m, ")");
 }
@@ -4669,7 +4704,7 @@ static bool actions_match(struct hist_trigger_data *hist_data,
 			if (strcmp(data->onmatch.match_event,
 				   data_test->onmatch.match_event) != 0)
 				return false;
-		} else if (data->fn == onmax_save) {
+		} else if (data->fn == onmax_save || data->fn == onmax_snapshot) {
 			if (strcmp(data->onmax.var_str,
 				   data_test->onmax.var_str) != 0)
 				return false;
@@ -4693,7 +4728,7 @@ static void print_actions_spec(struct seq_file *m,
 
 		if (data->fn == action_trace)
 			print_onmatch_spec(m, hist_data, data);
-		else if (data->fn == onmax_save)
+		else if (data->fn == onmax_save || data->fn == onmax_snapshot)
 			print_onmax_spec(m, hist_data, data);
 		else if (data->fn == action_delete)
 			print_delete_action_spec(m, hist_data, data);
