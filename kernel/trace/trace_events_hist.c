@@ -352,6 +352,14 @@ struct action_data {
 		} onmax;
 
 		struct {
+			char			*var_str;
+			char			*fn_name;
+			unsigned int		change_var_ref_idx;
+			struct hist_field	*change_var;
+			struct hist_field	*var;
+		} onchange;
+
+		struct {
 			struct list_head	tagged_hists;
 		} delete;
 	};
@@ -1931,6 +1939,7 @@ static int parse_action(char *str, struct hist_trigger_attrs *attrs)
 
 	if ((strncmp(str, "onmatch(", strlen("onmatch(")) == 0) ||
 	    (strncmp(str, "onmax(", strlen("onmax(")) == 0) ||
+	    (strncmp(str, "onchange(", strlen("onchange(")) == 0) ||
 	    (strncmp(str, "delete(", strlen("delete(")) == 0)) {
 		attrs->action_str[attrs->n_actions] = kstrdup(str, GFP_KERNEL);
 		if (!attrs->action_str[attrs->n_actions]) {
@@ -3400,6 +3409,25 @@ create_target_field_var(struct hist_trigger_data *target_hist_data,
 	return create_field_var(target_hist_data, file, var_name);
 }
 
+static bool update_change_val(struct tracing_map_elt *elt,
+			      struct action_data *data, u64 *var_ref_vals)
+{
+	unsigned int change_idx = data->onchange.change_var->var.idx;
+	unsigned int change_var_ref_idx = data->onchange.change_var_ref_idx;
+
+	u64 var_val, change_val;
+
+	var_val = var_ref_vals[change_var_ref_idx];
+	change_val = tracing_map_read_var(elt, change_idx);
+
+	if (var_val == change_val)
+		return false;
+
+	tracing_map_set_var(elt, change_idx, var_val);
+
+	return true;
+}
+
 static bool update_max_val(struct tracing_map_elt *elt,
 			   struct action_data *data, u64 *var_ref_vals)
 {
@@ -3425,6 +3453,17 @@ static void onmax_snapshot(struct hist_trigger_data *hist_data,
 			   struct action_data *data, u64 *var_ref_vals)
 {
 	bool updated = update_max_val(elt, data, var_ref_vals);
+
+	if (updated)
+		tracing_snapshot();
+}
+
+static void onchange_snapshot(struct hist_trigger_data *hist_data,
+			      struct tracing_map_elt *elt, void *rec,
+			      struct ring_buffer_event *rbe,
+			      struct action_data *data, u64 *var_ref_vals)
+{
+	bool updated = update_change_val(elt, data, var_ref_vals);
 
 	if (updated)
 		tracing_snapshot();
@@ -3459,6 +3498,16 @@ static void onmax_print(struct seq_file *m,
 	}
 }
 
+static void onchange_print(struct seq_file *m,
+			   struct hist_trigger_data *hist_data,
+			   struct tracing_map_elt *elt,
+			   struct action_data *data)
+{
+	unsigned int change_idx = data->onchange.change_var->var.idx;
+
+	seq_printf(m, "\n\tlast change: %10llu", tracing_map_read_var(elt, change_idx));
+}
+
 static void onmax_save(struct hist_trigger_data *hist_data,
 		       struct tracing_map_elt *elt, void *rec,
 		       struct ring_buffer_event *rbe,
@@ -3467,6 +3516,17 @@ static void onmax_save(struct hist_trigger_data *hist_data,
 	update_max_val(elt, data, var_ref_vals);
 
 	update_max_vars(hist_data, elt, rbe, rec);
+}
+
+static void onchange_destroy(struct action_data *data)
+{
+	destroy_hist_field(data->onchange.change_var, 0);
+	destroy_hist_field(data->onchange.var, 0);
+
+	kfree(data->onchange.var_str);
+	kfree(data->onchange.fn_name);
+
+	kfree(data);
 }
 
 static void onmax_destroy(struct action_data *data)
@@ -3483,6 +3543,60 @@ static void onmax_destroy(struct action_data *data)
 		kfree(data->params[i]);
 
 	kfree(data);
+}
+
+static int onchange_create(struct hist_trigger_data *hist_data,
+			   struct action_data *data)
+{
+	struct trace_event_file *file = hist_data->event_file;
+	struct hist_field *var_field, *ref_field, *change_var;
+	unsigned int var_ref_idx = hist_data->n_var_refs;
+	char *onchange_var_str;
+	unsigned long flags;
+	int ret = 0;
+
+	onchange_var_str = data->onchange.var_str;
+	if (onchange_var_str[0] != '$') {
+		hist_err("onchange: For onchange(x), x must be a variable: ", onchange_var_str);
+		return -EINVAL;
+	}
+	onchange_var_str++;
+
+	var_field = find_target_event_var(hist_data, NULL, NULL, onchange_var_str);
+	if (!var_field) {
+		hist_err("onchange: Couldn't find onchange variable: ", onchange_var_str);
+		return -EINVAL;
+	}
+
+	flags = HIST_FIELD_FL_VAR_REF;
+	ref_field = create_hist_field(hist_data, NULL, flags, NULL);
+	if (!ref_field)
+		return -ENOMEM;
+
+	if (init_var_ref(ref_field, var_field, NULL, NULL)) {
+		destroy_hist_field(ref_field, 0);
+		ret = -ENOMEM;
+		goto out;
+	}
+	hist_data->var_refs[hist_data->n_var_refs] = ref_field;
+	ref_field->var_ref_idx = hist_data->n_var_refs++;
+	data->onchange.var = ref_field;
+
+	data->onchange.change_var_ref_idx = var_ref_idx;
+	change_var = create_var(hist_data, file, "change", sizeof(u64), "u64");
+	if (IS_ERR(change_var)) {
+		hist_err("onchange: Couldn't create onchange variable: ", "change");
+		ret = PTR_ERR(change_var);
+		goto out;
+	}
+	data->onchange.change_var = change_var;
+
+	if (data->fn == onchange_snapshot) {
+		ret = tracing_alloc_snapshot();
+		goto out;
+	}
+ out:
+	return ret;
 }
 
 static int onmax_create(struct hist_trigger_data *hist_data,
@@ -3594,6 +3708,60 @@ static int parse_action_params(char *params, struct action_data *data)
 	}
  out:
 	return ret;
+}
+
+static struct action_data *onchange_parse(char *str)
+{
+	char *onchange_fn_name, *onchange_var_str;
+	struct action_data *data;
+	int ret = -EINVAL;
+
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
+	if (!data)
+		return ERR_PTR(-ENOMEM);
+
+	onchange_var_str = strsep(&str, ")");
+	if (!onchange_var_str || !str) {
+		ret = -EINVAL;
+		goto free;
+	}
+
+	data->onchange.var_str = kstrdup(onchange_var_str, GFP_KERNEL);
+	if (!data->onchange.var_str) {
+		ret = -ENOMEM;
+		goto free;
+	}
+
+	strsep(&str, ".");
+	if (!str)
+		goto free;
+
+	onchange_fn_name = strsep(&str, "(");
+	if (!onchange_fn_name || !str)
+		goto free;
+
+	if (strncmp(onchange_fn_name, "snapshot", strlen("snapshot")) == 0) {
+		char *params = strsep(&str, ")");
+
+		if (!params) {
+			ret = -EINVAL;
+			goto free;
+		}
+		data->fn = onchange_snapshot;
+	} else
+		goto free;
+
+	data->onchange.fn_name = kstrdup(onchange_fn_name, GFP_KERNEL);
+	if (!data->onchange.fn_name) {
+		ret = -ENOMEM;
+		goto free;
+	}
+ out:
+	return data;
+ free:
+	onchange_destroy(data);
+	data = ERR_PTR(ret);
+	goto out;
 }
 
 static struct action_data *onmax_parse(char *str)
@@ -4517,6 +4685,8 @@ static void destroy_actions(struct hist_trigger_data *hist_data)
 			delete_action_destroy(data);
 		else if (data->fn == onmax_save || data->fn == onmax_snapshot)
 			onmax_destroy(data);
+		else if (data->fn == onchange_snapshot)
+			onchange_destroy(data);
 		else
 			kfree(data);
 	}
@@ -4546,6 +4716,14 @@ static int parse_actions(struct hist_trigger_data *hist_data)
 			char *action_str = str + strlen("onmax(");
 
 			data = onmax_parse(action_str);
+			if (IS_ERR(data)) {
+				ret = PTR_ERR(data);
+				break;
+			}
+		} else if (strncmp(str, "onchange(", strlen("onchange(")) == 0) {
+			char *action_str = str + strlen("onchange(");
+
+			data = onchange_parse(action_str);
 			if (IS_ERR(data)) {
 				ret = PTR_ERR(data);
 				break;
@@ -4588,6 +4766,10 @@ static int create_actions(struct hist_trigger_data *hist_data,
 			ret = onmax_create(hist_data, data);
 			if (ret)
 				return ret;
+		} else if (data->fn == onchange_snapshot) {
+			ret = onchange_create(hist_data, data);
+			if (ret)
+				return ret;
 		} else if (data->fn == action_delete) {
 			ret = delete_action_create(hist_data, data);
 			if (ret)
@@ -4610,6 +4792,8 @@ static void print_actions(struct seq_file *m,
 
 		if (data->fn == onmax_save || data->fn == onmax_snapshot)
 			onmax_print(m, hist_data, elt, data);
+		else if (data->fn == onchange_snapshot)
+			onchange_print(m, hist_data, elt, data);
 	}
 }
 
@@ -4627,6 +4811,16 @@ static void print_delete_action_spec(struct seq_file *m,
 		seq_printf(m, "%s", data->params[i]);
 	}
 
+	seq_puts(m, ")");
+}
+
+static void print_onchange_spec(struct seq_file *m,
+				struct hist_trigger_data *hist_data,
+				struct action_data *data)
+{
+	seq_puts(m, ":onchange(");
+	seq_printf(m, "%s", data->onchange.var_str);
+	seq_printf(m, ").%s(", data->onchange.fn_name);
 	seq_puts(m, ")");
 }
 
@@ -4730,6 +4924,8 @@ static void print_actions_spec(struct seq_file *m,
 			print_onmatch_spec(m, hist_data, data);
 		else if (data->fn == onmax_save || data->fn == onmax_snapshot)
 			print_onmax_spec(m, hist_data, data);
+		else if (data->fn == onchange_snapshot)
+			print_onchange_spec(m, hist_data, data);
 		else if (data->fn == action_delete)
 			print_delete_action_spec(m, hist_data, data);
 	}
@@ -5300,6 +5496,13 @@ static int event_hist_trigger_print(struct seq_file *m,
 					seq_puts(m, ",");
 				hist_field_print(m, field);
 			}
+		} else if (data->fn == onchange_snapshot) {
+			if (strcmp(data->onchange.var_str,
+				   data_test->onchange.var_str) != 0)
+				return false;
+			if (strcmp(data->onchange.fn_name,
+				   data_test->onchange.fn_name) != 0)
+				return false;
 		}
 	}
 
