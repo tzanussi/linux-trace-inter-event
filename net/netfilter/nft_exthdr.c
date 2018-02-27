@@ -399,6 +399,9 @@ nft_exthdr_select_ops(const struct nft_ctx *ctx,
 			return &nft_exthdr_tcp_ops;
 		break;
 	case NFT_EXTHDR_OP_IPV6:
+	case NFT_EXTHDR_OP_RT0:
+	case NFT_EXTHDR_OP_RT2:
+	case NFT_EXTHDR_OP_RT4:
 		if (tb[NFTA_EXTHDR_DREG])
 			return &nft_exthdr_ipv6_ops;
 		break;

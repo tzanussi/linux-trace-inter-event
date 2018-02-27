@@ -731,6 +731,9 @@ enum nft_exthdr_flags {
 enum nft_exthdr_op {
 	NFT_EXTHDR_OP_IPV6,
 	NFT_EXTHDR_OP_TCPOPT,
+	NFT_EXTHDR_OP_RT0,
+	NFT_EXTHDR_OP_RT2,
+	NFT_EXTHDR_OP_RT4,
 	__NFT_EXTHDR_OP_MAX
 };
 #define NFT_EXTHDR_OP_MAX	(__NFT_EXTHDR_OP_MAX - 1)
