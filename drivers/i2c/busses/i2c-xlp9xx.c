@@ -16,7 +16,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/delay.h>
 
 #define XLP9XX_I2C_DIV			0x0
 #define XLP9XX_I2C_CTRL			0x1
@@ -36,8 +35,6 @@
 #define XLP9XX_I2C_WAITCNT		0xF
 #define XLP9XX_I2C_TIMEOUT		0X10
 #define XLP9XX_I2C_GENCALLADDR		0x11
-
-#define XLP9XX_I2C_STATUS_BUSY		BIT(0)
 
 #define XLP9XX_I2C_CMD_START		BIT(7)
 #define XLP9XX_I2C_CMD_STOP		BIT(6)
@@ -74,7 +71,6 @@
 #define XLP9XX_I2C_HIGH_FREQ		400000
 #define XLP9XX_I2C_FIFO_SIZE		0x80U
 #define XLP9XX_I2C_TIMEOUT_MS		1000
-#define XLP9XX_I2C_BUSY_TIMEOUT		50
 
 #define XLP9XX_I2C_FIFO_WCNT_MASK	0xff
 #define XLP9XX_I2C_STATUS_ERRMASK	(XLP9XX_I2C_INTEN_ARLOST | \
@@ -268,8 +264,7 @@ static int xlp9xx_i2c_xfer_msg(struct xlp9xx_i2c_dev *priv, struct i2c_msg *msg,
 			       int last_msg)
 {
 	unsigned long timeleft;
-	u32 intr_mask, cmd, val, len, status;
-	u32 busy_timeout = XLP9XX_I2C_BUSY_TIMEOUT;
+	u32 intr_mask, cmd, val, len;
 
 	priv->msg_buf = msg->buf;
 	priv->msg_buf_remaining = priv->msg_len = msg->len;
@@ -356,19 +351,6 @@ static int xlp9xx_i2c_xfer_msg(struct xlp9xx_i2c_dev *priv, struct i2c_msg *msg,
 		return -ETIMEDOUT;
 	}
 
-	while (last_msg && busy_timeout) {
-		status = xlp9xx_read_i2c_reg(priv, XLP9XX_I2C_STATUS);
-		if ((status & XLP9XX_I2C_STATUS_BUSY) == 0)
-			break;
-
-		busy_timeout--;
-		udelay(1);
-	}
-
-	if (!busy_timeout) {
-		dev_dbg(priv->dev, "i2c bus busy for too long after transfer\n");
-		return -EIO;
-	}
 	/* update msg->len with actual received length */
 	if (msg->flags & I2C_M_RECV_LEN)
 		msg->len = priv->msg_len;
