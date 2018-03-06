@@ -1,0 +1,30 @@
+next/soc
+	patch
+		arm64: defconfig: add newly added accelerated crypto modules
+		arm64: defconfig: add support for Socionext SynQuacer based platforms
+		MAINTAINERS: Add entry for the Nuvoton NPCM architecture
+		arm: npcm: add basic support for Nuvoton BMCs
+
+next/dt
+	patch
+		ARM: dts: artpec: disable Accelerator Coherency Port
+		ARM: dts: artpec: use 1 GiB RAM
+		ARM: dts: artpec: remove 0x prefix from clkctrl unit address
+		ARM: dts: artpec: migrate ethernet to stmmac binding
+		ARM: dts: artpec: add and utilize artpec6 pin controller
+		ARM: dts: artpec: add and utilize nbpfaxi DMA controllers
+		ARM: dts: artpec: add disabled node for PCIe endpoint mode
+		ARM: dts: artpec: add node for hardware crypto accelerator
+		arm: dts: add Nuvoton NPCM750 device tree
+
+next/drivers
+	patch
+		drivers/bus: Move Arm CCN PMU driver
+		drivers/bus: Split Arm CCI driver
+		perf/arm-cci: Simplify CPU hotplug
+		bus/arm-cci: Streamline devicetree handling a bit
+		perf/arm-cci: Clean up model discovery
+		perf/arm-cci: Untangle global cci_ctrl_base
+	drivers/reset
+		git://git.pengutronix.de/git/pza/linux tags/reset-for-4.17
+
