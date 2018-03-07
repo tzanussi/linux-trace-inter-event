@@ -1812,8 +1812,10 @@ static int do_execveat_common(int fd, struct filename *filename,
 	free_bprm(bprm);
 	kfree(pathbuf);
 	putname(filename);
-	if (displaced)
+	if (displaced) {
+		posix_change_lock_owners(current->files, displaced);
 		put_files_struct(displaced);
+	}
 	return retval;
 
 out:
