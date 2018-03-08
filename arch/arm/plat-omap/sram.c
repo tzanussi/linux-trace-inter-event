@@ -23,6 +23,7 @@
 #include <asm/fncpy.h>
 #include <asm/tlb.h>
 #include <asm/cacheflush.h>
+#include <asm/set_memory.h>
 
 #include <asm/mach/map.h>
 
@@ -96,3 +97,21 @@ void __init omap_map_sram(unsigned long start, unsigned long size,
 	memset_io(omap_sram_base + omap_sram_skip, 0,
 		  omap_sram_size - omap_sram_skip);
 }
+
+static int __init omap_sram_lock(void)
+{
+	unsigned long base;
+	int pages;
+
+	if (!omap_sram_base || !omap_sram_size)
+		return 0;
+
+	base = (unsigned long)omap_sram_base;
+	pages = PAGE_ALIGN(omap_sram_size) / PAGE_SIZE;
+
+	set_memory_ro((unsigned long)base, pages);
+	set_memory_x((unsigned long)base, pages);
+
+	return 0;
+}
+late_initcall(omap_sram_lock);
