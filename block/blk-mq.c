@@ -194,11 +194,7 @@ EXPORT_SYMBOL_GPL(blk_mq_unfreeze_queue);
  */
 void blk_mq_quiesce_queue_nowait(struct request_queue *q)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(q->queue_lock, flags);
-	queue_flag_set(QUEUE_FLAG_QUIESCED, q);
-	spin_unlock_irqrestore(q->queue_lock, flags);
+	blk_queue_flag_set(QUEUE_FLAG_QUIESCED, q);
 }
 EXPORT_SYMBOL_GPL(blk_mq_quiesce_queue_nowait);
 
@@ -239,11 +235,7 @@ EXPORT_SYMBOL_GPL(blk_mq_quiesce_queue);
  */
 void blk_mq_unquiesce_queue(struct request_queue *q)
 {
-	unsigned long flags;
-
-	spin_lock_irqsave(q->queue_lock, flags);
-	queue_flag_clear(QUEUE_FLAG_QUIESCED, q);
-	spin_unlock_irqrestore(q->queue_lock, flags);
+	blk_queue_flag_clear(QUEUE_FLAG_QUIESCED, q);
 
 	/* dispatch requests which are inserted during quiescing */
 	blk_mq_run_hw_queues(q, true);
@@ -2678,7 +2670,7 @@ struct request_queue *blk_mq_init_allocated_queue(struct blk_mq_tag_set *set,
 	q->queue_flags |= QUEUE_FLAG_MQ_DEFAULT;
 
 	if (!(set->flags & BLK_MQ_F_SG_MERGE))
-		q->queue_flags |= 1 << QUEUE_FLAG_NO_SG_MERGE;
+		queue_flag_set_unlocked(QUEUE_FLAG_NO_SG_MERGE, q);
 
 	q->sg_reserved_size = INT_MAX;
 
@@ -3005,7 +2997,7 @@ EXPORT_SYMBOL_GPL(blk_mq_update_nr_hw_queues);
 static bool blk_poll_stats_enable(struct request_queue *q)
 {
 	if (test_bit(QUEUE_FLAG_POLL_STATS, &q->queue_flags) ||
-	    test_and_set_bit(QUEUE_FLAG_POLL_STATS, &q->queue_flags))
+	    blk_queue_flag_test_and_set(QUEUE_FLAG_POLL_STATS, q))
 		return true;
 	blk_stat_add_callback(q, q->poll_cb);
 	return false;
