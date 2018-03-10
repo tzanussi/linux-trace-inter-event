@@ -1,0 +1,26 @@
+#!/bin/bash
+
+if test $# -lt 3; then
+    echo "usage: $0 event1 event2 key [log2]"
+    exit 1
+fi
+
+EVENT1=$1
+EVENT2=$2
+KEY=$3
+
+echo "${EVENT1}(x64 ${KEY})" >> /sys/kernel/debug/tracing/function_events
+echo "${EVENT2}(x64 ${KEY})" >> /sys/kernel/debug/tracing/function_events
+
+echo "funclat u64 lat; int pid" >> /sys/kernel/debug/tracing/synthetic_events
+
+echo "hist:tag=funclat:keys=${KEY}:ts0=common_timestamp.usecs" >> /sys/kernel/debug/tracing/events/functions/${EVENT1}/trigger
+
+echo "hist:tag=funclat:keys=${KEY}:lat=common_timestamp.usecs-\$ts0:onmatch(functions.${EVENT1}).funclat(\$lat,common_pid):delete(funclat)" >> /sys/kernel/debug/tracing/events/functions/${EVENT2}/trigger
+
+if [ ! -z $4 ]
+then
+    echo "hist:keys=pid,lat.log2:sort=pid,lat" >> /sys/kernel/debug/tracing/events/synthetic/funclat/trigger
+else
+    echo "hist:keys=pid,lat:sort=pid,lat" >> /sys/kernel/debug/tracing/events/synthetic/funclat/trigger
+fi

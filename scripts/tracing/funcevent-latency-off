@@ -1,0 +1,22 @@
+#!/bin/bash
+
+if test $# -lt 3; then
+    echo "usage: $0 event1 event2 key [log2]"
+    exit 1
+fi
+
+EVENT1=$1
+EVENT2=$2
+KEY=$3
+
+if [ ! -z $4 ]
+then
+    echo "!hist:keys=pid,lat.log2:sort=pid,lat" >> /sys/kernel/debug/tracing/events/synthetic/funclat/trigger
+else
+    echo "!hist:keys=pid,lat:sort=pid,lat" >> /sys/kernel/debug/tracing/events/synthetic/funclat/trigger
+fi
+
+echo 'hist:removeall(funclat)' >> /sys/kernel/debug/tracing/events/functions/${EVENT1}/trigger
+echo "!funclat u64 lat; int pid" >> /sys/kernel/debug/tracing/synthetic_events
+
+echo > /sys/kernel/debug/tracing/function_events

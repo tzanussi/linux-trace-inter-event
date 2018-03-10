@@ -1,0 +1,11 @@
+ #!/bin/sh
+
+DEBUGFS=`grep debugfs /proc/mounts | awk '{ print $2; }'`
+echo $$ > $DEBUGFS/tracing/set_event_pid
+echo 'block:* ext4:*' > $DEBUGFS/tracing/set_event
+echo 1 > $DEBUGFS/tracing/tracing_on
+exec $*
+echo 0 > $DEBUGFS/tracing/tracing_on
+echo '!block:* !ext4:*' > $DEBUGFS/tracing/set_event
+echo > $DEBUGFS/tracing/set_event_pid
+
