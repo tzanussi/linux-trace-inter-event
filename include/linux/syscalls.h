@@ -1038,4 +1038,11 @@ static inline long ksys_access(const char __user *filename, int mode)
 	return do_faccessat(AT_FDCWD, filename, mode);
 }
 
+extern long do_sys_ftruncate(unsigned int fd, loff_t length, int small);
+
+static inline long ksys_ftruncate(unsigned int fd, unsigned long length)
+{
+	return do_sys_ftruncate(fd, length, 1);
+}
+
 #endif
