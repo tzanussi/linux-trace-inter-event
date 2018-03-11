@@ -955,5 +955,14 @@ int ksys_dup(unsigned int fildes);
 int ksys_chroot(const char __user *filename);
 ssize_t ksys_write(unsigned int fd, const char __user *buf, size_t count);
 int ksys_unshare(unsigned long unshare_flags);
+#ifdef CONFIG_ADVISE_SYSCALLS
+int ksys_fadvise64_64(int fd, loff_t offset, loff_t len, int advice);
+#else
+static inline int ksys_fadvise64_64(int fd, loff_t offset, loff_t len,
+				    int advice)
+{
+	return -EINVAL;
+}
+#endif
 
 #endif
