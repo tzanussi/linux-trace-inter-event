@@ -954,5 +954,6 @@ int ksys_umount(char __user *name, int flags);
 int ksys_dup(unsigned int fildes);
 int ksys_chroot(const char __user *filename);
 ssize_t ksys_write(unsigned int fd, const char __user *buf, size_t count);
+int ksys_unshare(unsigned long unshare_flags);
 
 #endif
