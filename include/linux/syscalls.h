@@ -971,6 +971,7 @@ int ksys_chdir(const char __user *filename);
 int ksys_sync_file_range(int fd, loff_t offset, loff_t nbytes,
 			 unsigned int flags);
 int ksys_fchmod(unsigned int fd, umode_t mode);
+int ksys_fchown(unsigned int fd, uid_t user, gid_t group);
 
 /*
  * The following kernel syscall equivalents are just wrappers to fs-internal
@@ -1043,6 +1044,22 @@ extern long do_sys_ftruncate(unsigned int fd, loff_t length, int small);
 static inline long ksys_ftruncate(unsigned int fd, unsigned long length)
 {
 	return do_sys_ftruncate(fd, length, 1);
+}
+
+extern int do_fchownat(int dfd, const char __user *filename, uid_t user,
+		       gid_t group, int flag);
+
+static inline long ksys_chown(const char __user *filename, uid_t user,
+			      gid_t group)
+{
+	return do_fchownat(AT_FDCWD, filename, user, group, 0);
+}
+
+static inline long ksys_lchown(const char __user *filename, uid_t user,
+			       gid_t group)
+{
+	return do_fchownat(AT_FDCWD, filename, user, group,
+			     AT_SYMLINK_NOFOLLOW);
 }
 
 #endif
