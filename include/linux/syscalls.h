@@ -971,4 +971,15 @@ int ksys_chdir(const char __user *filename);
 int ksys_sync_file_range(int fd, loff_t offset, loff_t nbytes,
 			 unsigned int flags);
 
+/*
+ * The following kernel syscall equivalents are just wrappers to fs-internal
+ * functions. Therefore, provide stubs to be inlined at the callsites.
+ */
+extern long do_unlinkat(int dfd, struct filename *name);
+
+static inline long ksys_unlink(const char __user *pathname)
+{
+	return do_unlinkat(AT_FDCWD, getname(pathname));
+}
+
 #endif
