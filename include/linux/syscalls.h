@@ -950,5 +950,6 @@ asmlinkage long sys_statx(int dfd, const char __user *path, unsigned flags,
 
 int ksys_mount(char __user *dev_name, char __user *dir_name, char __user *type,
 	       unsigned long flags, void __user *data);
+int ksys_umount(char __user *name, int flags);
 
 #endif
