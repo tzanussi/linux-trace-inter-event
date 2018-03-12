@@ -27,6 +27,13 @@ next/soc
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.17/ti-sysc-signed
 	samsung/soc
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-soc-4.17
+	hisi/defconfig
+		git://github.com/hisilicon/linux-hisi tags/hisi-defconfig-for-4.17
+	at91/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.17-soc
+	pxa/soc
+		https://github.com/rjarzmik/linux tags/pxa-for-4.17
+		depends/nand/pxa3xx-removal
 
 next/dt
 	patch
@@ -67,8 +74,21 @@ next/dt
 		ARM: dts: atlas7: Use generic uart-has-rtscts DT property
 	samsung/dt
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt-4.17
-	<no branch> (6ca620371ab2dab89a7645fc363453d2e26c992e)
+	samsung/dt64
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt64-4.17
+	xilinx/dt
+		https://github.com/Xilinx/linux-xlnx tags/xilinx-dt-for-4.17
+	hisi/dt
+		git://github.com/hisilicon/linux-hisi tags/hisi-arm64-dt-for-4.17
+	mvebu/dt
+		git://git.infradead.org/linux-mvebu tags/mvebu-dt-4.17-1
+	mvebu/dt64
+		git://git.infradead.org/linux-mvebu tags/mvebu-dt64-4.17-1
+	at91/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.17-dt
+	patch
+		ARM: dts: keystone-k2g: add watchdog support
+		ARM: dts: Keystone: add ECC error handler support
 
 next/drivers
 	patch
@@ -94,3 +114,13 @@ next/drivers
 fixes
 	patch
 		ARM: ux500: Fix PMU IRQ regression
+	<no branch> (970656b3246d30955894951ed16bd658e42d8c24)
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-4.16-2
+	<no branch> (c4dc56be7e26040bfc60ce73425353516a356955)
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-fixes-for-v4.16
+	<no branch> (c535d632aecc6359d072374675a7787cbe71773b)
+		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.16-2
+	<no branch> (4e943a890cef42e90f43ce6be64728a290b97c55)
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.16-rockchip-dts32fixes-2
+	<no branch> (835a1d5cdefffe08bec46efff11daea9b389baa9)
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.16-rockchip-dts64fixes-2
