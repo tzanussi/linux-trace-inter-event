@@ -33,7 +33,9 @@ next/soc
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.17-soc
 	pxa/soc
 		https://github.com/rjarzmik/linux tags/pxa-for-4.17
-		depends/nand/pxa3xx-removal
+		contains depends/nand/pxa3xx-removal
+	broadcom/defconfig
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.17/defconfig
 
 next/dt
 	patch
@@ -89,6 +91,8 @@ next/dt
 	patch
 		ARM: dts: keystone-k2g: add watchdog support
 		ARM: dts: Keystone: add ECC error handler support
+	broadcom/dt
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.17/devicetree
 
 next/drivers
 	patch
@@ -110,6 +114,8 @@ next/drivers
 		https://git.linaro.org:/people/jens.wiklander/linux-tee tags/tee-drv-misc-for-v4.17
 	samsung/drivers
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-drivers-4.17
+	patch
+		cpufreq: scmi: add thermal dependency
 
 fixes
 	patch
