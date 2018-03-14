@@ -116,12 +116,27 @@ struct ctl_table
 	void *data;
 	int maxlen;
 	umode_t mode;
+	unsigned int flags;
 	struct ctl_table *child;	/* Deprecated */
 	proc_handler *proc_handler;	/* Callback for text formatting */
 	struct ctl_table_poll *poll;
 	void *extra1;
 	void *extra2;
 } __randomize_layout;
+
+/**
+ * enum ctl_table_flags - flags for the ctl table (struct ctl_table.flags)
+ *
+ * @CTL_FLAGS_CLAMP_RANGE: Set to indicate that the entry should be
+ *	flexibly clamped to min/max range in case the user provided
+ *	an incorrect value.
+ */
+enum ctl_table_flags {
+	CTL_FLAGS_CLAMP_RANGE		= BIT(0),
+	__CTL_FLAGS_MAX			= BIT(1),
+};
+
+#define CTL_TABLE_FLAGS_ALL	(__CTL_FLAGS_MAX - 1)
 
 struct ctl_node {
 	struct rb_node node;
