@@ -1014,7 +1014,7 @@ static inline int pud_free_pmd_page(pud_t *pud)
 {
 	return 0;
 }
-static inline int pmd_free_pte_page(pud_t *pmd)
+static inline int pmd_free_pte_page(pmd_t *pmd)
 {
 	return 0;
 }
