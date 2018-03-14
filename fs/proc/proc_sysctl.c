@@ -1092,6 +1092,16 @@ static int sysctl_check_table_array(const char *path, struct ctl_table *table)
 	return err;
 }
 
+static int sysctl_check_flags(const char *path, struct ctl_table *table)
+{
+	int err = 0;
+
+	if (table->flags & ~CTL_TABLE_FLAGS_ALL)
+		err = sysctl_err(path, table, "invalid flags");
+
+	return err;
+}
+
 static int sysctl_check_table(const char *path, struct ctl_table *table)
 {
 	int err = 0;
@@ -1111,6 +1121,8 @@ static int sysctl_check_table(const char *path, struct ctl_table *table)
 		    (table->proc_handler == proc_doulongvec_ms_jiffies_minmax)) {
 			if (!table->data)
 				err |= sysctl_err(path, table, "No data");
+			if (table->flags)
+				err |= sysctl_check_flags(path, table);
 			if (!table->maxlen)
 				err |= sysctl_err(path, table, "No maxlen");
 			else
