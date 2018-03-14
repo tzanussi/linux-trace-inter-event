@@ -1617,7 +1617,7 @@ deferred_grow_zone(struct zone *zone, unsigned int order)
 
 	/*
 	 * If deferred pages have been initialized while we were waiting for
- 	 * the lock, return true, as the zone was grown.  The caller will retry
+	 * the lock, return true, as the zone was grown.  The caller will retry
 	 * this zone.  We won't return to this function since the caller also
 	 * has this static branch.
 	 */
