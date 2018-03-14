@@ -712,7 +712,7 @@ static int add_memory_block(int base_section_nr)
  * need an interface for the VM to add new memory regions,
  * but without onlining it.
  */
-int register_new_memory(int nid, struct mem_section *section)
+int hotplug_memory_register(int nid, struct mem_section *section)
 {
 	int ret = 0;
 	struct memory_block *mem;
