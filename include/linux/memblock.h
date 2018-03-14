@@ -187,7 +187,6 @@ int memblock_search_pfn_nid(unsigned long pfn, unsigned long *start_pfn,
 			    unsigned long  *end_pfn);
 void __next_mem_pfn_range(int *idx, int nid, unsigned long *out_start_pfn,
 			  unsigned long *out_end_pfn, int *out_nid);
-unsigned long memblock_next_valid_pfn(unsigned long pfn);
 
 /**
  * for_each_mem_pfn_range - early memory pfn range iterator
@@ -203,6 +202,8 @@ unsigned long memblock_next_valid_pfn(unsigned long pfn);
 	for (i = -1, __next_mem_pfn_range(&i, nid, p_start, p_end, p_nid); \
 	     i >= 0; __next_mem_pfn_range(&i, nid, p_start, p_end, p_nid))
 #endif /* CONFIG_HAVE_MEMBLOCK_NODE_MAP */
+
+unsigned long memblock_next_valid_pfn(unsigned long pfn);
 
 /**
  * for_each_free_mem_range - iterate through free memblock areas
