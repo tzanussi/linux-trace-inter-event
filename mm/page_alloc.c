@@ -1506,6 +1506,7 @@ static void __init deferred_free_pages(int nid, int zid, unsigned long pfn,
 		} else if (!(pfn & nr_pgmask)) {
 			deferred_free_range(pfn - nr_free, nr_free);
 			nr_free = 1;
+			touch_nmi_watchdog();
 		} else {
 			nr_free++;
 		}
@@ -1532,10 +1533,12 @@ static unsigned long  __init deferred_init_pages(int nid, int zid,
 		if (!deferred_pfn_valid(nid, pfn, &nid_init_state)) {
 			page = NULL;
 			continue;
-		} else if (!page || !(pfn & nr_pgmask))
+		} else if (!page || !(pfn & nr_pgmask)) {
 			page = pfn_to_page(pfn);
-		else
+			touch_nmi_watchdog();
+		} else {
 			page++;
+		}
 		__init_single_page(page, pfn, zid, nid, true);
 		nr_pages++;
 	}
@@ -1560,10 +1563,10 @@ static int __init deferred_init_memmap(void *data)
 	if (!cpumask_empty(cpumask))
 		set_cpus_allowed_ptr(current, cpumask);
 
-	pgdat_resize_lock_irq(pgdat, &flags);
+	pgdat_resize_lock(pgdat, &flags);
 	first_init_pfn = pgdat->first_deferred_pfn;
 	if (first_init_pfn == ULONG_MAX) {
-		pgdat_resize_unlock_irq(pgdat, &flags);
+		pgdat_resize_unlock(pgdat, &flags);
 		pgdat_init_report_one_done();
 		return 0;
 	}
@@ -1597,7 +1600,7 @@ static int __init deferred_init_memmap(void *data)
 		epfn = min_t(unsigned long, zone_end_pfn(zone), PFN_DOWN(epa));
 		deferred_free_pages(nid, zid, spfn, epfn);
 	}
-	pgdat_resize_unlock_irq(pgdat, &flags);
+	pgdat_resize_unlock(pgdat, &flags);
 
 	/* Sanity check that the next zone really is unpopulated */
 	WARN_ON(++zid < MAX_NR_ZONES && populated_zone(++zone));

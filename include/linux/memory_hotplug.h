@@ -287,32 +287,12 @@ void pgdat_resize_init(struct pglist_data *pgdat)
 {
 	spin_lock_init(&pgdat->node_size_lock);
 }
-
-/* Disable interrupts and save previous IRQ state in flags before locking */
-static inline
-void pgdat_resize_lock_irq(struct pglist_data *pgdat, unsigned long *flags)
-{
-	unsigned long tmp_flags;
-
-	local_irq_save(*flags);
-	local_irq_disable();
-	pgdat_resize_lock(pgdat, &tmp_flags);
-}
-
-static inline
-void pgdat_resize_unlock_irq(struct pglist_data *pgdat, unsigned long *flags)
-{
-	pgdat_resize_unlock(pgdat, flags);
-}
-
 #else /* !(CONFIG_MEMORY_HOTPLUG || CONFIG_DEFERRED_STRUCT_PAGE_INIT) */
 /*
  * Stub functions for when hotplug is off
  */
 static inline void pgdat_resize_lock(struct pglist_data *p, unsigned long *f) {}
 static inline void pgdat_resize_unlock(struct pglist_data *p, unsigned long *f) {}
-static inline void pgdat_resize_lock_irq(struct pglist_data *p, unsigned long *f) {}
-static inline void pgdat_resize_unlock_irq(struct pglist_data *p, unsigned long *f) {}
 static inline void pgdat_resize_init(struct pglist_data *pgdat) {}
 #endif /* !(CONFIG_MEMORY_HOTPLUG || CONFIG_DEFERRED_STRUCT_PAGE_INIT) */
 
