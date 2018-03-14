@@ -1613,16 +1613,16 @@ deferred_grow_zone(struct zone *zone, unsigned int order)
 	if (zone_end_pfn(zone) != pgdat_end_pfn(pgdat))
 		return false;
 
-	pgdat_resize_lock_irq(pgdat, &flags);
+	pgdat_resize_lock(pgdat, &flags);
 
 	/*
 	 * If deferred pages have been initialized while we were waiting for
-	 * the lock, return true, as the zone was grown.  The caller will retry
+ 	 * the lock, return true, as the zone was grown.  The caller will retry
 	 * this zone.  We won't return to this function since the caller also
 	 * has this static branch.
 	 */
 	if (!static_branch_unlikely(&deferred_pages)) {
-		pgdat_resize_unlock_irq(pgdat, &flags);
+		pgdat_resize_unlock(pgdat, &flags);
 		return true;
 	}
 
@@ -1631,14 +1631,14 @@ deferred_grow_zone(struct zone *zone, unsigned int order)
 	 * true, as there might be enough pages already.
 	 */
 	if (first_deferred_pfn != pgdat->first_deferred_pfn) {
-		pgdat_resize_unlock_irq(pgdat, &flags);
+		pgdat_resize_unlock(pgdat, &flags);
 		return true;
 	}
 
 	first_init_pfn = max(zone->zone_start_pfn, first_deferred_pfn);
 
 	if (first_init_pfn >= pgdat_end_pfn(pgdat)) {
-		pgdat_resize_unlock_irq(pgdat, &flags);
+		pgdat_resize_unlock(pgdat, &flags);
 		return false;
 	}
 
@@ -1667,7 +1667,7 @@ deferred_grow_zone(struct zone *zone, unsigned int order)
 			break;
 	}
 	pgdat->first_deferred_pfn = first_deferred_pfn;
-	pgdat_resize_unlock_irq(pgdat, &flags);
+	pgdat_resize_unlock(pgdat, &flags);
 
 	return nr_pages > 0;
 }
