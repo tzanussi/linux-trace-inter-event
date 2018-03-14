@@ -1327,8 +1327,8 @@ int kern_addr_valid(unsigned long addr)
 }
 
 /*
- * Block size is the minimum quantum of memory which can be hot-plugged or
- * hot-removed. It must be power of two, and must be equal or larger than
+ * Block size is the minimum amount of memory which can be hotplugged or
+ * hotremoved. It must be power of two and must be equal or larger than
  * MIN_MEMORY_BLOCK_SIZE.
  */
 #define MAX_BLOCK_SIZE (2UL << 30)
