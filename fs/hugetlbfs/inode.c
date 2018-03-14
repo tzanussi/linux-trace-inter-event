@@ -108,10 +108,18 @@ static void huge_pagevec_release(struct pagevec *pvec)
 	pagevec_reinit(pvec);
 }
 
+/*
+ * Mask used when checking the page offset value passed in via system
+ * calls.  This value will be converted to a loff_t which is signed.
+ * Therefore, we want to check the upper PAGE_SHIFT + 1 bits of the
+ * value.  The extra bit (- 1 in the shift value) is to take the sign
+ * bit into account.
+ */
+#define PGOFF_LOFFT_MAX (PAGE_MASK << (BITS_PER_LONG - (2 * PAGE_SHIFT) - 1))
+
 static int hugetlbfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	struct inode *inode = file_inode(file);
-	unsigned long ovfl_mask;
 	loff_t len, vma_len;
 	int ret;
 	struct hstate *h = hstate_file(file);
@@ -131,10 +139,7 @@ static int hugetlbfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 	 * page based offset in vm_pgoff could be sufficiently large to
 	 * overflow a (l)off_t when converted to byte offset.
 	 */
-	ovfl_mask = (1UL << (PAGE_SHIFT + 1)) - 1;
-	ovfl_mask <<= ((sizeof(unsigned long) * BITS_PER_BYTE) -
-		       (PAGE_SHIFT + 1));
-	if (vma->vm_pgoff & ovfl_mask)
+	if (vma->vm_pgoff & PGOFF_LOFFT_MAX)
 		return -EINVAL;
 
 	/* must be huge page aligned */
