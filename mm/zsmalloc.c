@@ -1410,6 +1410,7 @@ EXPORT_SYMBOL_GPL(zs_unmap_object);
 /**
  * zs_huge_class_size() - Returns the size (in bytes) of the first huge
  *                        zsmalloc &size_class.
+ * @pool: zsmalloc pool to use
  *
  * The function returns the size of the first huge class - any object of equal
  * or bigger size will be stored in zspage consisting of a single physical
@@ -1419,7 +1420,7 @@ EXPORT_SYMBOL_GPL(zs_unmap_object);
  *
  * Return: the size (in bytes) of the first huge zsmalloc &size_class.
  */
-size_t zs_huge_class_size(void)
+size_t zs_huge_class_size(struct zs_pool *pool)
 {
 	return huge_class_size;
 }
