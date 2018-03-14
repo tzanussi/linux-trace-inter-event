@@ -1575,14 +1575,10 @@ static int __init deferred_init_memmap(void *data)
 }
 
 /*
- * This lock guarantees that only one thread at a time is allowed to grow zones
- * (decrease number of deferred pages).
- * Protects first_deferred_pfn field in all zones during early boot before
- * deferred pages are initialized.  Deferred pages are initialized in
- * page_alloc_init_late() soon after smp_init() is complete.
+ * During boot we initialize deferred pages on-demand, as needed, but once
+ * page_alloc_init_late() has finished, the deferred pages are all initialized,
+ * and we can permanently disable path.
  */
-static __initdata DEFINE_SPINLOCK(deferred_zone_grow_lock);
-static bool deferred_zone_grow __initdata = true;
 static DEFINE_STATIC_KEY_TRUE(deferred_pages);
 
 /*
@@ -1592,8 +1588,9 @@ static DEFINE_STATIC_KEY_TRUE(deferred_pages);
  * of SECTION_SIZE bytes by initializing struct pages in increments of
  * PAGES_PER_SECTION * sizeof(struct page) bytes.
  *
- * Return true when zone was grown by at least number of pages specified by
- * order. Otherwise return false.
+ * Return true when zone was grown, otherwise return false. We return true even
+ * when we grow less than requested, let the caller decide if there are enough
+ * pages to satisfy allocation.
  *
  * Note: We use noinline because this function is needed only during boot, and
  * it is called from a __ref function _deferred_grow_zone. This way we are
@@ -1607,7 +1604,8 @@ deferred_grow_zone(struct zone *zone, unsigned int order)
 	pg_data_t *pgdat = NODE_DATA(nid);
 	unsigned long nr_pages_needed = ALIGN(1 << order, PAGES_PER_SECTION);
 	unsigned long nr_pages = 0;
-	unsigned long first_init_pfn, first_deferred_pfn, spfn, epfn, t, flags;
+	unsigned long first_init_pfn, spfn, epfn, t, flags;
+	unsigned long first_deferred_pfn = pgdat->first_deferred_pfn;
 	phys_addr_t spa, epa;
 	u64 i;
 
@@ -1615,21 +1613,32 @@ deferred_grow_zone(struct zone *zone, unsigned int order)
 	if (zone_end_pfn(zone) != pgdat_end_pfn(pgdat))
 		return false;
 
-	spin_lock_irqsave(&deferred_zone_grow_lock, flags);
+	pgdat_resize_lock_irq(pgdat, &flags);
+
 	/*
-	 * Bail if we raced with another thread that disabled on demand
-	 * initialization.
+	 * If deferred pages have been initialized while we were waiting for
+	 * lock return true, as zone was grown. The caller will try again this
+	 * zone.  We won't return to this function again, since caller also has
+	 * this static branch.
 	 */
-	if (!static_branch_unlikely(&deferred_pages) || !deferred_zone_grow) {
-		spin_unlock_irqrestore(&deferred_zone_grow_lock, flags);
-		return false;
+	if (!static_branch_unlikely(&deferred_pages)) {
+		pgdat_resize_unlock_irq(pgdat, &flags);
+		return true;
 	}
 
-	first_deferred_pfn = pgdat->first_deferred_pfn;
+	/*
+	 * If someone grew this zone while we were waiting for spinlock, return
+	 * true, as there might be enough pages already.
+	 */
+	if (first_deferred_pfn != pgdat->first_deferred_pfn) {
+		pgdat_resize_unlock_irq(pgdat, &flags);
+		return true;
+	}
+
 	first_init_pfn = max(zone->zone_start_pfn, first_deferred_pfn);
 
 	if (first_init_pfn >= pgdat_end_pfn(pgdat)) {
-		spin_unlock_irqrestore(&deferred_zone_grow_lock, flags);
+		pgdat_resize_unlock_irq(pgdat, &flags);
 		return false;
 	}
 
@@ -1658,9 +1667,9 @@ deferred_grow_zone(struct zone *zone, unsigned int order)
 			break;
 	}
 	pgdat->first_deferred_pfn = first_deferred_pfn;
-	spin_unlock_irqrestore(&deferred_zone_grow_lock, flags);
+	pgdat_resize_unlock_irq(pgdat, &flags);
 
-	return nr_pages >= nr_pages_needed;
+	return nr_pages > 0;
 }
 
 /*
@@ -1684,19 +1693,6 @@ void __init page_alloc_init_late(void)
 #ifdef CONFIG_DEFERRED_STRUCT_PAGE_INIT
 	int nid;
 
-	/*
-	 * We are about to initialize the rest of deferred pages, permanently
-	 * disable on-demand struct page initialization.
-	 *
-	 * Note: it is prohibited to modify static branches in non-preemptible
-	 * context. Since, spin_lock() disables preemption, we must use an
-	 * extra boolean deferred_zone_grow.
-	 */
-	spin_lock_irq(&deferred_zone_grow_lock);
-	deferred_zone_grow = false;
-	spin_unlock_irq(&deferred_zone_grow_lock);
-	static_branch_disable(&deferred_pages);
-
 	/* There will be num_node_state(N_MEMORY) threads */
 	atomic_set(&pgdat_init_n_undone, num_node_state(N_MEMORY));
 	for_each_node_state(nid, N_MEMORY) {
@@ -1705,6 +1701,12 @@ void __init page_alloc_init_late(void)
 
 	/* Block until all are initialised */
 	wait_for_completion(&pgdat_init_all_done_comp);
+
+	/*
+	 * We initialized the rest of deferred pages, permanently
+	 * disable on-demand struct page initialization.
+	 */
+	static_branch_disable(&deferred_pages);
 
 	/* Reinit limits that are based on free pages after the kernel is up */
 	files_maxfiles_init();
