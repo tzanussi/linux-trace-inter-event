@@ -115,7 +115,8 @@ static void huge_pagevec_release(struct pagevec *pvec)
  * value.  The extra bit (- 1 in the shift value) is to take the sign
  * bit into account.
  */
-#define PGOFF_LOFFT_MAX (PAGE_MASK << (BITS_PER_LONG - (2 * PAGE_SHIFT) - 1))
+#define PGOFF_LOFFT_MAX \
+	(((1UL << (PAGE_SHIFT + 1)) - 1) <<  (BITS_PER_LONG - (PAGE_SHIFT + 1)))
 
 static int hugetlbfs_file_mmap(struct file *file, struct vm_area_struct *vma)
 {
