@@ -1178,9 +1178,9 @@ do_blockdev_direct_IO(struct kiocb *iocb, struct inode *inode,
 	unsigned blkbits = i_blkbits;
 	unsigned blocksize_mask = (1 << blkbits) - 1;
 	ssize_t retval = -EINVAL;
-	size_t count = iov_iter_count(iter);
+	const size_t count = iov_iter_count(iter);
 	loff_t offset = iocb->ki_pos;
-	loff_t end = offset + count;
+	const loff_t end = offset + count;
 	struct dio *dio;
 	struct dio_submit sdio = { 0, };
 	struct buffer_head map_bh = { 0, };
