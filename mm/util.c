@@ -522,8 +522,7 @@ struct address_space *page_mapping_file(struct page *page)
 {
 	if (unlikely(PageSwapCache(page)))
 		return NULL;
-	else
-		return page_mapping(page);
+	return page_mapping(page);
 }
 
 /* Slow path of page_mapcount() for compound pages */
