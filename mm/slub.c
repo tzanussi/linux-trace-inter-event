@@ -1388,7 +1388,7 @@ static __always_inline bool slab_free_hook(struct kmem_cache *s, void *x)
 	return kasan_slab_free(s, x, _RET_IP_);
 }
 
-static inline void slab_free_freelist_hook(struct kmem_cache *s,
+static inline bool slab_free_freelist_hook(struct kmem_cache *s,
 					   void **head, void **tail)
 {
 /*
@@ -1423,6 +1423,10 @@ static inline void slab_free_freelist_hook(struct kmem_cache *s,
 
 	if (*head == *tail)
 		*tail = NULL;
+
+	return *head != NULL;
+#else
+	return true;
 #endif
 }
 
@@ -2981,8 +2985,7 @@ static __always_inline void slab_free(struct kmem_cache *s, struct page *page,
 	 * With KASAN enabled slab_free_freelist_hook modifies the freelist
 	 * to remove objects, whose reuse must be delayed.
 	 */
-	slab_free_freelist_hook(s, &head, &tail);
-	if (head != NULL)
+	if (slab_free_freelist_hook(s, &head, &tail))
 		do_slab_free(s, page, head, tail, cnt, addr);
 }
 
