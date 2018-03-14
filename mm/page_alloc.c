@@ -1692,9 +1692,9 @@ void __init page_alloc_init_late(void)
 	 * context. Since, spin_lock() disables preemption, we must use an
 	 * extra boolean deferred_zone_grow.
 	 */
-	spin_lock(&deferred_zone_grow_lock);
+	spin_lock_irq(&deferred_zone_grow_lock);
 	deferred_zone_grow = false;
-	spin_unlock(&deferred_zone_grow_lock);
+	spin_unlock_irq(&deferred_zone_grow_lock);
 	static_branch_disable(&deferred_pages);
 
 	/* There will be num_node_state(N_MEMORY) threads */
