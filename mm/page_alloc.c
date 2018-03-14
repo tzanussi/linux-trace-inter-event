@@ -1577,7 +1577,7 @@ static int __init deferred_init_memmap(void *data)
 /*
  * During boot we initialize deferred pages on-demand, as needed, but once
  * page_alloc_init_late() has finished, the deferred pages are all initialized,
- * and we can permanently disable path.
+ * and we can permanently disable that path.
  */
 static DEFINE_STATIC_KEY_TRUE(deferred_pages);
 
@@ -1589,8 +1589,8 @@ static DEFINE_STATIC_KEY_TRUE(deferred_pages);
  * PAGES_PER_SECTION * sizeof(struct page) bytes.
  *
  * Return true when zone was grown, otherwise return false. We return true even
- * when we grow less than requested, let the caller decide if there are enough
- * pages to satisfy allocation.
+ * when we grow less than requested, to let the caller decide if there are
+ * enough pages to satisfy the allocation.
  *
  * Note: We use noinline because this function is needed only during boot, and
  * it is called from a __ref function _deferred_grow_zone. This way we are
@@ -1617,9 +1617,9 @@ deferred_grow_zone(struct zone *zone, unsigned int order)
 
 	/*
 	 * If deferred pages have been initialized while we were waiting for
-	 * lock return true, as zone was grown. The caller will try again this
-	 * zone.  We won't return to this function again, since caller also has
-	 * this static branch.
+	 * the lock, return true, as the zone was grown.  The caller will retry
+	 * this zone.  We won't return to this function since the caller also
+	 * has this static branch.
 	 */
 	if (!static_branch_unlikely(&deferred_pages)) {
 		pgdat_resize_unlock_irq(pgdat, &flags);
@@ -1703,8 +1703,8 @@ void __init page_alloc_init_late(void)
 	wait_for_completion(&pgdat_init_all_done_comp);
 
 	/*
-	 * We initialized the rest of deferred pages, permanently
-	 * disable on-demand struct page initialization.
+	 * We initialized the rest of the deferred pages.  Permanently disable
+	 * on-demand struct page initialization.
 	 */
 	static_branch_disable(&deferred_pages);
 
