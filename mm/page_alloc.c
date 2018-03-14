@@ -5365,7 +5365,7 @@ void __meminit memmap_init_zone(unsigned long size, int nid, unsigned long zone,
 			 * the valid region but still depends on correct page
 			 * metadata.
 			 */
-			pfn = (memblock_next_valid_pfn(pfn, end_pfn) &
+			pfn = (memblock_next_valid_pfn(pfn) &
 					~(pageblock_nr_pages-1)) - 1;
 #endif
 			continue;
