@@ -1582,6 +1582,7 @@ static int __init deferred_init_memmap(void *data)
  * page_alloc_init_late() soon after smp_init() is complete.
  */
 static __initdata DEFINE_SPINLOCK(deferred_zone_grow_lock);
+static bool deferred_zone_grow __initdata = true;
 static DEFINE_STATIC_KEY_TRUE(deferred_pages);
 
 /*
@@ -1619,7 +1620,7 @@ deferred_grow_zone(struct zone *zone, unsigned int order)
 	 * Bail if we raced with another thread that disabled on demand
 	 * initialization.
 	 */
-	if (!static_branch_unlikely(&deferred_pages)) {
+	if (!static_branch_unlikely(&deferred_pages) || !deferred_zone_grow) {
 		spin_unlock_irqrestore(&deferred_zone_grow_lock, flags);
 		return false;
 	}
@@ -1686,10 +1687,15 @@ void __init page_alloc_init_late(void)
 	/*
 	 * We are about to initialize the rest of deferred pages, permanently
 	 * disable on-demand struct page initialization.
+	 *
+	 * Note: it is prohibited to modify static branches in non-preemptible
+	 * context. Since, spin_lock() disables preemption, we must use an
+	 * extra boolean deferred_zone_grow.
 	 */
 	spin_lock(&deferred_zone_grow_lock);
-	static_branch_disable(&deferred_pages);
+	deferred_zone_grow = false;
 	spin_unlock(&deferred_zone_grow_lock);
+	static_branch_disable(&deferred_pages);
 
 	/* There will be num_node_state(N_MEMORY) threads */
 	atomic_set(&pgdat_init_n_undone, num_node_state(N_MEMORY));
