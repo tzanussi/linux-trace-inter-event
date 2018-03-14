@@ -641,7 +641,6 @@ static int zs_stats_size_show(struct seq_file *s, void *v)
 
 	return 0;
 }
-
 DEFINE_SHOW_ATTRIBUTE(zs_stats_size);
 
 static void zs_pool_stat_create(struct zs_pool *pool, const char *name)
@@ -661,7 +660,7 @@ static void zs_pool_stat_create(struct zs_pool *pool, const char *name)
 	pool->stat_dentry = entry;
 
 	entry = debugfs_create_file("classes", S_IFREG | S_IRUGO,
-			pool->stat_dentry, pool, &zs_stat_size_ops);
+			pool->stat_dentry, pool, &zs_stats_size_fops);
 	if (!entry) {
 		pr_warn("%s: debugfs file entry <%s> creation failed\n",
 				name, "classes");

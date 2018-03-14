@@ -223,7 +223,6 @@ alloc_buffer:
 
 	return 0;
 }
-
 DEFINE_SHOW_ATTRIBUTE(percpu_stats);
 
 static int __init init_percpu_stats_debugfs(void)
