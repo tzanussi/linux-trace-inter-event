@@ -1201,7 +1201,7 @@ do_blockdev_direct_IO(struct kiocb *iocb, struct inode *inode,
 	}
 
 	/* watch out for a 0 len io from a tricksy fs */
-	if (iov_iter_rw(iter) == READ && !iov_iter_count(iter))
+	if (iov_iter_rw(iter) == READ && !count)
 		return 0;
 
 	dio = kmem_cache_alloc(dio_cache, GFP_KERNEL);
@@ -1318,8 +1318,7 @@ do_blockdev_direct_IO(struct kiocb *iocb, struct inode *inode,
 
 	dio->should_dirty = (iter->type == ITER_IOVEC);
 	sdio.iter = iter;
-	sdio.final_block_in_request =
-		(offset + iov_iter_count(iter)) >> blkbits;
+	sdio.final_block_in_request = end >> blkbits;
 
 	/*
 	 * In case of non-aligned buffers, we may need 2 more
