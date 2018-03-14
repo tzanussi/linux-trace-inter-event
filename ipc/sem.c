@@ -2344,3 +2344,31 @@ static int sysvipc_sem_proc_show(struct seq_file *s, void *it)
 	return 0;
 }
 #endif
+
+#ifdef CONFIG_PROC_SYSCTL
+/*
+ * Check to see if semmni is out of range and clamp it if necessary.
+ */
+void sem_check_semmni(struct ctl_table *table, struct ipc_namespace *ns)
+{
+	bool clamped = false;
+
+	if (!(table->flags & CTL_FLAGS_CLAMP_RANGE))
+		return;
+
+	/*
+	 * Clamp semmni to the range [0, IPCMNI].
+	 */
+	if (ns->sc_semmni < 0) {
+		ns->sc_semmni = 0;
+		clamped = true;
+	}
+	if (ns->sc_semmni > IPCMNI) {
+		ns->sc_semmni = IPCMNI;
+		clamped = true;
+	}
+	if (clamped)
+		pr_warn_once("sysctl: \"sem[3]\" was set out of range [%d, %d], clamped to %d.\n",
+			     0, IPCMNI, ns->sc_semmni);
+}
+#endif
