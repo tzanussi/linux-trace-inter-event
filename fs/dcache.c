@@ -269,8 +269,16 @@ static void __d_free(struct rcu_head *head)
 static void __d_free_external(struct rcu_head *head)
 {
 	struct dentry *dentry = container_of(head, struct dentry, d_u.d_rcu);
-	kfree(external_name(dentry));
-	kmem_cache_free(dentry_cache, dentry); 
+	struct external_name *name = external_name(dentry);
+	unsigned long bytes;
+
+	bytes = dentry->d_name.len + offsetof(struct external_name, name[1]);
+	mod_node_page_state(page_pgdat(virt_to_page(name)),
+			    NR_INDIRECTLY_RECLAIMABLE_BYTES,
+			    -kmalloc_size(kmalloc_index(bytes)));
+
+	kfree(name);
+	kmem_cache_free(dentry_cache, dentry);
 }
 
 static inline int dname_external(const struct dentry *dentry)
@@ -1602,6 +1610,7 @@ struct dentry *__d_alloc(struct super_block *sb, const struct qstr *name)
 	struct dentry *dentry;
 	char *dname;
 	int err;
+	size_t reclaimable = 0;
 
 	dentry = kmem_cache_alloc(dentry_cache, GFP_KERNEL);
 	if (!dentry)
@@ -1618,9 +1627,11 @@ struct dentry *__d_alloc(struct super_block *sb, const struct qstr *name)
 		name = &slash_name;
 		dname = dentry->d_iname;
 	} else if (name->len > DNAME_INLINE_LEN-1) {
-		size_t size = offsetof(struct external_name, name[1]);
-		struct external_name *p = kmalloc(size + name->len,
-						  GFP_KERNEL_ACCOUNT);
+		struct external_name *p;
+
+		reclaimable = offsetof(struct external_name, name[1]) +
+			name->len;
+		p = kmalloc(reclaimable, GFP_KERNEL_ACCOUNT);
 		if (!p) {
 			kmem_cache_free(dentry_cache, dentry); 
 			return NULL;
@@ -1663,6 +1674,14 @@ struct dentry *__d_alloc(struct super_block *sb, const struct qstr *name)
 			kmem_cache_free(dentry_cache, dentry);
 			return NULL;
 		}
+	}
+
+	if (unlikely(reclaimable)) {
+		pg_data_t *pgdat;
+
+		pgdat = page_pgdat(virt_to_page(external_name(dentry)));
+		mod_node_page_state(pgdat, NR_INDIRECTLY_RECLAIMABLE_BYTES,
+				    kmalloc_size(kmalloc_index(reclaimable)));
 	}
 
 	this_cpu_inc(nr_dentry);
