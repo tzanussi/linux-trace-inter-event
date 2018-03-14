@@ -38,7 +38,7 @@ static void fsnotify_final_destroy_group(struct fsnotify_group *group)
 		group->ops->free_group_priv(group);
 
 	if (group->memcg)
-		css_put(&group->memcg->css);
+		mem_cgroup_put(group->memcg);
 
 	kfree(group);
 }
