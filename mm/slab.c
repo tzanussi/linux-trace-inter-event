@@ -2674,11 +2674,7 @@ static struct page *cache_grow_begin(struct kmem_cache *cachep,
 	if (n->colour_next >= cachep->colour)
 		n->colour_next = 0;
 
-	offset = n->colour_next;
-	if (offset >= cachep->colour)
-		offset = 0;
-
-	offset *= cachep->colour_off;
+	offset = n->colour_next * cachep->colour_off;
 
 	/* Get slab management. */
 	freelist = alloc_slabmgmt(cachep, page, offset,
