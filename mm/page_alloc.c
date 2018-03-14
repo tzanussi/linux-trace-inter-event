@@ -1602,7 +1602,7 @@ static noinline bool __init
 deferred_grow_zone(struct zone *zone, unsigned int order)
 {
 	int zid = zone_idx(zone);
-	int nid = zone->node;
+	int nid = zone_to_nid(zone);
 	pg_data_t *pgdat = NODE_DATA(nid);
 	unsigned long nr_pages_needed = ALIGN(1 << order, PAGES_PER_SECTION);
 	unsigned long nr_pages = 0;
