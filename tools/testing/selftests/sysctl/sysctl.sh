@@ -34,6 +34,7 @@ ALL_TESTS="$ALL_TESTS 0002:1:1"
 ALL_TESTS="$ALL_TESTS 0003:1:1"
 ALL_TESTS="$ALL_TESTS 0004:1:1"
 ALL_TESTS="$ALL_TESTS 0005:3:1"
+ALL_TESTS="$ALL_TESTS 0006:1:1"
 
 test_modprobe()
 {
@@ -61,6 +62,9 @@ function allow_user_defaults()
 	fi
 	if [ -z $WRITES_STRICT ]; then
 		WRITES_STRICT="${PROD_SYSCTL}/kernel/sysctl_writes_strict"
+	fi
+	if [ -z $MSGMNI ]; then
+		MSGMNI="${PROD_SYSCTL}/kernel/msgmni"
 	fi
 }
 
@@ -543,6 +547,34 @@ run_stringtests()
 	test_rc
 }
 
+# TARGET, BEYOND_MIN & BEYOND_MAX need to be defined before running test.
+run_range_clamping_test()
+{
+	echo -n "Checking range minimum clamping ... "
+	echo $BEYOND_MIN > "$TARGET" > /dev/null 2>&1
+	EXITVAL=$?
+	NEWVAL=$(cat "$TARGET")
+	if [[ $EXITVAL -ne 0 || $NEWVAL -le $BEYOND_MIN ]]; then
+		echo "FAIL" >&2
+		rc=1
+	else
+		echo "ok"
+	fi
+
+	echo -n "Checking range maximum clamping ... "
+	echo $BEYOND_MAX > "$TARGET" > /dev/null 2>&1
+	EXITVAL=$?
+	NEWVAL=$(cat "$TARGET")
+	if [[ $EXITVAL -ne 0 || $NEWVAL -ge $BEYOND_MAX ]]; then
+		echo "FAIL" >&2
+		rc=1
+	else
+		echo "ok"
+	fi
+
+	test_rc
+}
+
 sysctl_test_0001()
 {
 	TARGET="${SYSCTL}/int_0001"
@@ -598,6 +630,17 @@ sysctl_test_0005()
 	ORIG=$(cat "${TARGET}")
 
 	run_limit_digit_int_array
+}
+
+sysctl_test_0006()
+{
+	TARGET="${MSGMNI}"
+	ORIG=$(cat "${TARGET}")
+	BEYOND_MIN=-1
+	BEYOND_MAX=1000000000
+
+	run_range_clamping_test
+	set_orig
 }
 
 list_tests()
