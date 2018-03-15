@@ -36,6 +36,12 @@ next/soc
 		contains depends/nand/pxa3xx-removal
 	broadcom/defconfig
 		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.17/defconfig
+	patch
+		ARM: configs: add OXNAS v6 defconfig
+	imx/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-soc-4.17
+	imx/defconfig
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-defconfig-4.17
 
 next/dt
 	patch
@@ -93,6 +99,19 @@ next/dt
 		ARM: dts: Keystone: add ECC error handler support
 	broadcom/dt
 		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.17/devicetree
+	aspeed/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/joel/aspeed tags/aspeed-4.17-devicetree
+	sti/dt-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/pchotard/sti tags/sti-dt-for-v4.17-round2
+	uniphier/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-dt-v4.17
+	imx/dt-clk
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt-newclk-4.17
+		contains imx/clk-driver
+	imx/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt-4.17
+	imx/dt64
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt64-4.17
 
 next/drivers
 	patch
@@ -116,6 +135,8 @@ next/drivers
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-drivers-4.17
 	patch
 		cpufreq: scmi: add thermal dependency
+	imx/drivers
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-drivers-4.17
 
 fixes
 	patch
@@ -130,3 +151,5 @@ fixes
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.16-rockchip-dts32fixes-2
 	<no branch> (835a1d5cdefffe08bec46efff11daea9b389baa9)
 		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.16-rockchip-dts64fixes-2
+	patch
+		ARM: dts: aspeed: Add default memory node
