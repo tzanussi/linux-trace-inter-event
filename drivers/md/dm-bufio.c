@@ -99,7 +99,6 @@ struct dm_bufio_client {
 	struct block_device *bdev;
 	unsigned block_size;
 	unsigned char sectors_per_block_bits;
-	unsigned char pages_per_block_bits;
 	unsigned aux_size;
 	void (*alloc_callback)(struct dm_buffer *);
 	void (*write_callback)(struct dm_buffer *);
@@ -132,14 +131,13 @@ struct dm_bufio_client {
 
 /*
  * Describes how the block was allocated:
- * kmem_cache_alloc(), __get_free_pages() or vmalloc().
+ * kmem_cache_alloc() or vmalloc().
  * See the comment at alloc_buffer_data.
  */
 enum data_mode {
 	DATA_MODE_SLAB = 0,
-	DATA_MODE_GET_FREE_PAGES = 1,
-	DATA_MODE_VMALLOC = 2,
-	DATA_MODE_LIMIT = 3
+	DATA_MODE_VMALLOC = 1,
+	DATA_MODE_LIMIT = 2
 };
 
 struct dm_buffer {
@@ -216,7 +214,6 @@ static unsigned long dm_bufio_retain_bytes = DM_BUFIO_DEFAULT_RETAIN_BYTES;
 
 static unsigned long dm_bufio_peak_allocated;
 static unsigned long dm_bufio_allocated_kmem_cache;
-static unsigned long dm_bufio_allocated_get_free_pages;
 static unsigned long dm_bufio_allocated_vmalloc;
 static unsigned long dm_bufio_current_allocated;
 
@@ -307,7 +304,6 @@ static void adjust_total_allocated(enum data_mode data_mode, long diff)
 {
 	static unsigned long * const class_ptr[DATA_MODE_LIMIT] = {
 		&dm_bufio_allocated_kmem_cache,
-		&dm_bufio_allocated_get_free_pages,
 		&dm_bufio_allocated_vmalloc,
 	};
 
@@ -349,19 +345,16 @@ static void __cache_size_refresh(void)
 /*
  * Allocating buffer data.
  *
- * Small buffers are allocated with kmem_cache, to use space optimally.
+ * Most buffers are allocated with kmem_cache_alloc because it is fast.
  *
- * For large buffers, we choose between get_free_pages and vmalloc.
- * Each has advantages and disadvantages.
- *
- * __get_free_pages can randomly fail if the memory is fragmented.
+ * However, kmem_cache_alloc can randomly fail if the memory is fragmented.
  * __vmalloc won't randomly fail, but vmalloc space is limited (it may be
  * as low as 128M) so using it for caching is not appropriate.
  *
- * If the allocation may fail we use __get_free_pages. Memory fragmentation
+ * If the allocation may fail we use kmem_cache_alloc. Memory fragmentation
  * won't have a fatal effect here, but it just causes flushes of some other
- * buffers and more I/O will be performed. Don't use __get_free_pages if it
- * always fails (i.e. order >= MAX_ORDER).
+ * buffers and more I/O will be performed. Don't use kmem_cache_alloc if it
+ * always fails (i.e. size > KMALLOC_MAX_SIZE).
  *
  * If the allocation shouldn't fail we use __vmalloc. This is only for the
  * initial reserve allocation, so there's no risk of wasting all vmalloc
@@ -373,13 +366,6 @@ static void *alloc_buffer_data(struct dm_bufio_client *c, gfp_t gfp_mask,
 	if (c->slab_cache) {
 		*data_mode = DATA_MODE_SLAB;
 		return kmem_cache_alloc(c->slab_cache, gfp_mask);
-	}
-
-	if (c->block_size <= DM_BUFIO_BLOCK_SIZE_GFP_LIMIT &&
-	    gfp_mask & __GFP_NORETRY) {
-		*data_mode = DATA_MODE_GET_FREE_PAGES;
-		return (void *)__get_free_pages(gfp_mask,
-						c->pages_per_block_bits);
 	}
 
 	*data_mode = DATA_MODE_VMALLOC;
@@ -413,10 +399,6 @@ static void free_buffer_data(struct dm_bufio_client *c,
 	switch (data_mode) {
 	case DATA_MODE_SLAB:
 		kmem_cache_free(c->slab_cache, data);
-		break;
-
-	case DATA_MODE_GET_FREE_PAGES:
-		free_pages((unsigned long)data, c->pages_per_block_bits);
 		break;
 
 	case DATA_MODE_VMALLOC:
@@ -1655,8 +1637,6 @@ struct dm_bufio_client *dm_bufio_client_create(struct block_device *bdev, unsign
 	c->bdev = bdev;
 	c->block_size = block_size;
 	c->sectors_per_block_bits = __ffs(block_size) - SECTOR_SHIFT;
-	c->pages_per_block_bits = (__ffs(block_size) >= PAGE_SHIFT) ?
-				  __ffs(block_size) - PAGE_SHIFT : 0;
 
 	c->aux_size = aux_size;
 	c->alloc_callback = alloc_callback;
@@ -1682,7 +1662,7 @@ struct dm_bufio_client *dm_bufio_client_create(struct block_device *bdev, unsign
 		goto bad_dm_io;
 	}
 
-	if (block_size < PAGE_SIZE) {
+	if (block_size <= KMALLOC_MAX_SIZE) {
 		char name[26];
 		snprintf(name, sizeof name, "dm_bufio_cache-%u", c->block_size);
 		c->slab_cache = kmem_cache_create(name, c->block_size, ARCH_KMALLOC_MINALIGN,
@@ -1873,7 +1853,6 @@ static int __init dm_bufio_init(void)
 	__u64 mem;
 
 	dm_bufio_allocated_kmem_cache = 0;
-	dm_bufio_allocated_get_free_pages = 0;
 	dm_bufio_allocated_vmalloc = 0;
 	dm_bufio_current_allocated = 0;
 
@@ -1927,12 +1906,6 @@ static void __exit dm_bufio_exit(void)
 		bug = 1;
 	}
 
-	if (dm_bufio_allocated_get_free_pages) {
-		DMCRIT("%s: dm_bufio_allocated_get_free_pages leaked: %lu",
-		       __func__, dm_bufio_allocated_get_free_pages);
-		bug = 1;
-	}
-
 	if (dm_bufio_allocated_vmalloc) {
 		DMCRIT("%s: dm_bufio_vmalloc leaked: %lu",
 		       __func__, dm_bufio_allocated_vmalloc);
@@ -1959,9 +1932,6 @@ MODULE_PARM_DESC(peak_allocated_bytes, "Tracks the maximum allocated memory");
 
 module_param_named(allocated_kmem_cache_bytes, dm_bufio_allocated_kmem_cache, ulong, S_IRUGO);
 MODULE_PARM_DESC(allocated_kmem_cache_bytes, "Memory allocated with kmem_cache_alloc");
-
-module_param_named(allocated_get_free_pages_bytes, dm_bufio_allocated_get_free_pages, ulong, S_IRUGO);
-MODULE_PARM_DESC(allocated_get_free_pages_bytes, "Memory allocated with get_free_pages");
 
 module_param_named(allocated_vmalloc_bytes, dm_bufio_allocated_vmalloc, ulong, S_IRUGO);
 MODULE_PARM_DESC(allocated_vmalloc_bytes, "Memory allocated with vmalloc");
