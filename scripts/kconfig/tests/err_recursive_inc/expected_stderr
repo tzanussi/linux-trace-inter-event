@@ -1,0 +1,5 @@
+Kconfig:1: recursive inclusion detected. Inclusion path:
+  current file : 'Kconfig'
+  included from: 'Kconfig3:1'
+  included from: 'Kconfig2:1'
+  included from: 'Kconfig:1'
