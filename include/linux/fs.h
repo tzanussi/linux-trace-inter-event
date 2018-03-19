@@ -2390,8 +2390,8 @@ struct audit_names;
 struct filename {
 	const char		*name;	/* pointer to actual string */
 	const __user char	*uptr;	/* original userland pointer */
-	struct audit_names	*aname;
 	int			refcnt;
+	struct audit_names	*aname;
 	const char		iname[];
 };
 
@@ -2472,6 +2472,11 @@ static inline struct super_block *freeze_bdev(struct block_device *sb)
 }
 
 static inline int thaw_bdev(struct block_device *bdev, struct super_block *sb)
+{
+	return 0;
+}
+
+static inline int emergency_thaw_bdev(struct super_block *sb)
 {
 	return 0;
 }
