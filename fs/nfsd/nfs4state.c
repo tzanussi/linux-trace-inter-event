@@ -98,6 +98,7 @@ enum nfsd4_st_mutex_lock_subclass {
  */
 static DECLARE_WAIT_QUEUE_HEAD(close_wq);
 
+static struct kmem_cache *client_slab;
 static struct kmem_cache *openowner_slab;
 static struct kmem_cache *lockowner_slab;
 static struct kmem_cache *file_slab;
@@ -266,6 +267,35 @@ free_blocked_lock(struct nfsd4_blocked_lock *nbl)
 {
 	locks_release_private(&nbl->nbl_lock);
 	kfree(nbl);
+}
+
+static void
+remove_blocked_locks(struct nfs4_lockowner *lo)
+{
+	struct nfs4_client *clp = lo->lo_owner.so_client;
+	struct nfsd_net *nn = net_generic(clp->net, nfsd_net_id);
+	struct nfsd4_blocked_lock *nbl;
+	LIST_HEAD(reaplist);
+
+	/* Dequeue all blocked locks */
+	spin_lock(&nn->blocked_locks_lock);
+	while (!list_empty(&lo->lo_blocked)) {
+		nbl = list_first_entry(&lo->lo_blocked,
+					struct nfsd4_blocked_lock,
+					nbl_list);
+		list_del_init(&nbl->nbl_list);
+		list_move(&nbl->nbl_lru, &reaplist);
+	}
+	spin_unlock(&nn->blocked_locks_lock);
+
+	/* Now free them */
+	while (!list_empty(&reaplist)) {
+		nbl = list_first_entry(&reaplist, struct nfsd4_blocked_lock,
+					nbl_lru);
+		list_del_init(&nbl->nbl_lru);
+		posix_unblock_lock(&nbl->nbl_lock);
+		free_blocked_lock(nbl);
+	}
 }
 
 static int
@@ -1765,7 +1795,7 @@ static struct nfs4_client *alloc_client(struct xdr_netobj name)
 	struct nfs4_client *clp;
 	int i;
 
-	clp = kzalloc(sizeof(struct nfs4_client), GFP_KERNEL);
+	clp = kmem_cache_zalloc(client_slab, GFP_KERNEL);
 	if (clp == NULL)
 		return NULL;
 	clp->cl_name.data = kmemdup(name.data, name.len, GFP_KERNEL);
@@ -1796,7 +1826,7 @@ static struct nfs4_client *alloc_client(struct xdr_netobj name)
 err_no_hashtbl:
 	kfree(clp->cl_name.data);
 err_no_name:
-	kfree(clp);
+	kmem_cache_free(client_slab, clp);
 	return NULL;
 }
 
@@ -1816,7 +1846,7 @@ free_client(struct nfs4_client *clp)
 	kfree(clp->cl_ownerstr_hashtbl);
 	kfree(clp->cl_name.data);
 	idr_destroy(&clp->cl_stateids);
-	kfree(clp);
+	kmem_cache_free(client_slab, clp);
 }
 
 /* must be called under the client_lock */
@@ -1866,6 +1896,7 @@ static __be32 mark_client_expired_locked(struct nfs4_client *clp)
 static void
 __destroy_client(struct nfs4_client *clp)
 {
+	int i;
 	struct nfs4_openowner *oo;
 	struct nfs4_delegation *dp;
 	struct list_head reaplist;
@@ -1894,6 +1925,16 @@ __destroy_client(struct nfs4_client *clp)
 		oo = list_entry(clp->cl_openowners.next, struct nfs4_openowner, oo_perclient);
 		nfs4_get_stateowner(&oo->oo_owner);
 		release_openowner(oo);
+	}
+	for (i = 0; i < OWNER_HASH_SIZE; i++) {
+		struct nfs4_stateowner *so, *tmp;
+
+		list_for_each_entry_safe(so, tmp, &clp->cl_ownerstr_hashtbl[i],
+					 so_strhash) {
+			/* Should be no openowners at this point */
+			WARN_ON_ONCE(so->so_is_open_owner);
+			remove_blocked_locks(lockowner(so));
+		}
 	}
 	nfsd4_return_all_client_layouts(clp);
 	nfsd4_shutdown_callback(clp);
@@ -3431,21 +3472,26 @@ static void nfsd4_init_file(struct knfsd_fh *fh, unsigned int hashval,
 void
 nfsd4_free_slabs(void)
 {
-	kmem_cache_destroy(odstate_slab);
+	kmem_cache_destroy(client_slab);
 	kmem_cache_destroy(openowner_slab);
 	kmem_cache_destroy(lockowner_slab);
 	kmem_cache_destroy(file_slab);
 	kmem_cache_destroy(stateid_slab);
 	kmem_cache_destroy(deleg_slab);
+	kmem_cache_destroy(odstate_slab);
 }
 
 int
 nfsd4_init_slabs(void)
 {
+	client_slab = kmem_cache_create("nfsd4_clients",
+			sizeof(struct nfs4_client), 0, 0, NULL);
+	if (client_slab == NULL)
+		goto out;
 	openowner_slab = kmem_cache_create("nfsd4_openowners",
 			sizeof(struct nfs4_openowner), 0, 0, NULL);
 	if (openowner_slab == NULL)
-		goto out;
+		goto out_free_client_slab;
 	lockowner_slab = kmem_cache_create("nfsd4_lockowners",
 			sizeof(struct nfs4_lockowner), 0, 0, NULL);
 	if (lockowner_slab == NULL)
@@ -3478,6 +3524,8 @@ out_free_lockowner_slab:
 	kmem_cache_destroy(lockowner_slab);
 out_free_openowner_slab:
 	kmem_cache_destroy(openowner_slab);
+out_free_client_slab:
+	kmem_cache_destroy(client_slab);
 out:
 	dprintk("nfsd4: out of memory while initializing nfsv4\n");
 	return -ENOMEM;
@@ -5481,15 +5529,26 @@ nfsd4_close(struct svc_rqst *rqstp, struct nfsd4_compound_state *cstate,
 		goto out; 
 
 	stp->st_stid.sc_type = NFS4_CLOSED_STID;
+
+	/*
+	 * Technically we don't _really_ have to increment or copy it, since
+	 * it should just be gone after this operation and we clobber the
+	 * copied value below, but we continue to do so here just to ensure
+	 * that racing ops see that there was a state change.
+	 */
 	nfs4_inc_and_copy_stateid(&close->cl_stateid, &stp->st_stid);
 
 	nfsd4_close_open_stateid(stp);
 	mutex_unlock(&stp->st_mutex);
 
-	/* See RFC5661 sectionm 18.2.4 */
-	if (stp->st_stid.sc_client->cl_minorversion)
-		memcpy(&close->cl_stateid, &close_stateid,
-				sizeof(close->cl_stateid));
+	/* v4.1+ suggests that we send a special stateid in here, since the
+	 * clients should just ignore this anyway. Since this is not useful
+	 * for v4.0 clients either, we set it to the special close_stateid
+	 * universally.
+	 *
+	 * See RFC5661 section 18.2.4, and RFC7530 section 16.2.5
+	 */
+	memcpy(&close->cl_stateid, &close_stateid, sizeof(close->cl_stateid));
 
 	/* put reference from nfs4_preprocess_seqid_op */
 	nfs4_put_stid(&stp->st_stid);
@@ -6355,6 +6414,7 @@ nfsd4_release_lockowner(struct svc_rqst *rqstp,
 	}
 	spin_unlock(&clp->cl_lock);
 	free_ol_stateid_reaplist(&reaplist);
+	remove_blocked_locks(lo);
 	nfs4_put_stateowner(&lo->lo_owner);
 
 	return status;
@@ -7140,6 +7200,8 @@ nfs4_state_destroy_net(struct net *net)
 		}
 	}
 
+	WARN_ON(!list_empty(&nn->blocked_locks_lru));
+
 	for (i = 0; i < CLIENT_HASH_SIZE; i++) {
 		while (!list_empty(&nn->unconf_id_hashtbl[i])) {
 			clp = list_entry(nn->unconf_id_hashtbl[i].next, struct nfs4_client, cl_idhash);
@@ -7206,7 +7268,6 @@ nfs4_state_shutdown_net(struct net *net)
 	struct nfs4_delegation *dp = NULL;
 	struct list_head *pos, *next, reaplist;
 	struct nfsd_net *nn = net_generic(net, nfsd_net_id);
-	struct nfsd4_blocked_lock *nbl;
 
 	cancel_delayed_work_sync(&nn->laundromat_work);
 	locks_end_grace(&nn->nfsd4_manager);
@@ -7225,24 +7286,6 @@ nfs4_state_shutdown_net(struct net *net)
 		put_clnt_odstate(dp->dl_clnt_odstate);
 		nfs4_put_deleg_lease(dp->dl_stid.sc_file);
 		nfs4_put_stid(&dp->dl_stid);
-	}
-
-	BUG_ON(!list_empty(&reaplist));
-	spin_lock(&nn->blocked_locks_lock);
-	while (!list_empty(&nn->blocked_locks_lru)) {
-		nbl = list_first_entry(&nn->blocked_locks_lru,
-					struct nfsd4_blocked_lock, nbl_lru);
-		list_move(&nbl->nbl_lru, &reaplist);
-		list_del_init(&nbl->nbl_list);
-	}
-	spin_unlock(&nn->blocked_locks_lock);
-
-	while (!list_empty(&reaplist)) {
-		nbl = list_first_entry(&reaplist,
-					struct nfsd4_blocked_lock, nbl_lru);
-		list_del_init(&nbl->nbl_lru);
-		posix_unblock_lock(&nbl->nbl_lock);
-		free_blocked_lock(nbl);
 	}
 
 	nfsd4_client_tracking_exit(net);
