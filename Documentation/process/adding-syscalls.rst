@@ -201,12 +201,6 @@ followed by the (type, name) pairs for the parameters as arguments.  Using
 this macro allows metadata about the new system call to be made available for
 other tools.
 
-The new entry point also needs a corresponding function prototype, in
-``include/linux/syscalls.h``, marked as asmlinkage to match the way that system
-calls are invoked::
-
-    asmlinkage long sys_xyzzy(...);
-
 Some architectures (e.g. x86) have their own architecture-specific syscall
 tables, but several other architectures share a generic syscall table. Add your
 new system call to the generic list by adding an entry to the list in
@@ -240,7 +234,6 @@ To summarize, you need a commit that includes:
 
  - ``CONFIG`` option for the new function, normally in ``init/Kconfig``
  - ``SYSCALL_DEFINEn(xyzzy, ...)`` for the entry point
- - corresponding prototype in ``include/linux/syscalls.h``
  - generic table entry in ``include/uapi/asm-generic/unistd.h``
  - fallback stub in ``kernel/sys_ni.c``
 
@@ -302,12 +295,6 @@ needed to deal with them.  (Typically, the ``compat_sys_`` version converts the
 values to 64-bit versions and either calls on to the ``sys_`` version, or both of
 them call a common inner implementation function.)
 
-The compat entry point also needs a corresponding function prototype, in
-``include/linux/compat.h``, marked as asmlinkage to match the way that system
-calls are invoked::
-
-    asmlinkage long compat_sys_xyzzy(...);
-
 If the system call involves a structure that is laid out differently on 32-bit
 and 64-bit systems, say ``struct xyzzy_args``, then the include/linux/compat.h
 header file should also include a compat version of the structure (``struct
@@ -344,7 +331,6 @@ version; the entry in ``include/uapi/asm-generic/unistd.h`` should use
 To summarize, you need:
 
  - a ``COMPAT_SYSCALL_DEFINEn(xyzzy, ...)`` for the compat entry point
- - corresponding prototype in ``include/linux/compat.h``
  - (if needed) 32-bit mapping struct in ``include/linux/compat.h``
  - instance of ``__SC_COMP`` not ``__SYSCALL`` in
    ``include/uapi/asm-generic/unistd.h``

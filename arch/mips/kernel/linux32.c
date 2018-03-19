@@ -67,8 +67,8 @@ SYSCALL_DEFINE6(32_mmap2, unsigned long, addr, unsigned long, len,
 {
 	if (pgoff & (~PAGE_MASK >> 12))
 		return -EINVAL;
-	return sys_mmap_pgoff(addr, len, prot, flags, fd,
-			      pgoff >> (PAGE_SHIFT-12));
+	return ksys_mmap_pgoff(addr, len, prot, flags, fd,
+			       pgoff >> (PAGE_SHIFT-12));
 }
 
 #define RLIM_INFINITY32 0x7fffffff
@@ -88,7 +88,7 @@ SYSCALL_DEFINE4(32_truncate64, const char __user *, path,
 SYSCALL_DEFINE4(32_ftruncate64, unsigned long, fd, unsigned long, __dummy,
 	unsigned long, a2, unsigned long, a3)
 {
-	return sys_ftruncate(fd, merge_64(a2, a3));
+	return ksys_ftruncate(fd, merge_64(a2, a3));
 }
 
 SYSCALL_DEFINE5(32_llseek, unsigned int, fd, unsigned int, offset_high,
@@ -139,7 +139,7 @@ asmlinkage long sys32_sync_file_range(int fd, int __pad,
 	unsigned long a4, unsigned long a5,
 	int flags)
 {
-	return sys_sync_file_range(fd,
+	return ksys_sync_file_range(fd,
 			merge_64(a2, a3), merge_64(a4, a5),
 			flags);
 }
@@ -149,7 +149,7 @@ asmlinkage long sys32_fadvise64_64(int fd, int __pad,
 	unsigned long a4, unsigned long a5,
 	int flags)
 {
-	return sys_fadvise64_64(fd,
+	return ksys_fadvise64_64(fd,
 			merge_64(a2, a3), merge_64(a4, a5),
 			flags);
 }

@@ -288,7 +288,7 @@ asmlinkage long sys_capset(cap_user_header_t header,
 				const cap_user_data_t data);
 asmlinkage long sys_personality(unsigned int personality);
 
-asmlinkage long sys_sigpending(old_sigset_t __user *set);
+asmlinkage long sys_sigpending(old_sigset_t __user *uset);
 asmlinkage long sys_sigprocmask(int how, old_sigset_t __user *set,
 				old_sigset_t __user *oset);
 asmlinkage long sys_sigaltstack(const struct sigaltstack __user *uss,
@@ -940,5 +940,149 @@ asmlinkage long sys_pkey_alloc(unsigned long flags, unsigned long init_val);
 asmlinkage long sys_pkey_free(int pkey);
 asmlinkage long sys_statx(int dfd, const char __user *path, unsigned flags,
 			  unsigned mask, struct statx __user *buffer);
+
+
+/*
+ * Kernel code should not call syscalls (i.e., sys_xyzyyz()) directly.
+ * Instead, use one of the functions which work equivalently, such as
+ * the ksys_xyzyyz() functions prototyped below.
+ */
+
+int ksys_mount(char __user *dev_name, char __user *dir_name, char __user *type,
+	       unsigned long flags, void __user *data);
+int ksys_umount(char __user *name, int flags);
+int ksys_dup(unsigned int fildes);
+int ksys_chroot(const char __user *filename);
+ssize_t ksys_write(unsigned int fd, const char __user *buf, size_t count);
+int ksys_unshare(unsigned long unshare_flags);
+#ifdef CONFIG_ADVISE_SYSCALLS
+int ksys_fadvise64_64(int fd, loff_t offset, loff_t len, int advice);
+#else
+static inline int ksys_fadvise64_64(int fd, loff_t offset, loff_t len,
+				    int advice)
+{
+	return -EINVAL;
+}
+#endif
+unsigned long ksys_mmap_pgoff(unsigned long addr, unsigned long len,
+			      unsigned long prot, unsigned long flags,
+			      unsigned long fd, unsigned long pgoff);
+int ksys_chdir(const char __user *filename);
+int ksys_sync_file_range(int fd, loff_t offset, loff_t nbytes,
+			 unsigned int flags);
+int ksys_fchmod(unsigned int fd, umode_t mode);
+int ksys_fchown(unsigned int fd, uid_t user, gid_t group);
+
+/*
+ * The following kernel syscall equivalents are just wrappers to fs-internal
+ * functions. Therefore, provide stubs to be inlined at the callsites.
+ */
+extern long do_unlinkat(int dfd, struct filename *name);
+
+static inline long ksys_unlink(const char __user *pathname)
+{
+	return do_unlinkat(AT_FDCWD, getname(pathname));
+}
+
+extern long do_rmdir(int dfd, const char __user *pathname);
+
+static inline long ksys_rmdir(const char __user *pathname)
+{
+	return do_rmdir(AT_FDCWD, pathname);
+}
+
+extern long do_mkdirat(int dfd, const char __user *pathname, umode_t mode);
+
+static inline long ksys_mkdir(const char __user *pathname, umode_t mode)
+{
+	return do_mkdirat(AT_FDCWD, pathname, mode);
+}
+
+extern long do_symlinkat(const char __user *oldname, int newdfd,
+			 const char __user *newname);
+
+static inline long ksys_symlink(const char __user *oldname,
+				const char __user *newname)
+{
+	return do_symlinkat(oldname, AT_FDCWD, newname);
+}
+
+extern long do_mknodat(int dfd, const char __user *filename, umode_t mode,
+		       unsigned int dev);
+
+static inline long ksys_mknod(const char __user *filename, umode_t mode,
+			      unsigned int dev)
+{
+	return do_mknodat(AT_FDCWD, filename, mode, dev);
+}
+
+extern int do_linkat(int olddfd, const char __user *oldname, int newdfd,
+		     const char __user *newname, int flags);
+
+static inline long ksys_link(const char __user *oldname,
+			     const char __user *newname)
+{
+	return do_linkat(AT_FDCWD, oldname, AT_FDCWD, newname, 0);
+}
+
+extern int do_fchmodat(int dfd, const char __user *filename, umode_t mode);
+
+static inline int ksys_chmod(const char __user *filename, umode_t mode)
+{
+	return do_fchmodat(AT_FDCWD, filename, mode);
+}
+
+extern long do_faccessat(int dfd, const char __user *filename, int mode);
+
+static inline long ksys_access(const char __user *filename, int mode)
+{
+	return do_faccessat(AT_FDCWD, filename, mode);
+}
+
+extern long do_sys_ftruncate(unsigned int fd, loff_t length, int small);
+
+static inline long ksys_ftruncate(unsigned int fd, unsigned long length)
+{
+	return do_sys_ftruncate(fd, length, 1);
+}
+
+extern int do_fchownat(int dfd, const char __user *filename, uid_t user,
+		       gid_t group, int flag);
+
+static inline long ksys_chown(const char __user *filename, uid_t user,
+			      gid_t group)
+{
+	return do_fchownat(AT_FDCWD, filename, user, group, 0);
+}
+
+static inline long ksys_lchown(const char __user *filename, uid_t user,
+			       gid_t group)
+{
+	return do_fchownat(AT_FDCWD, filename, user, group,
+			     AT_SYMLINK_NOFOLLOW);
+}
+
+extern int __close_fd(struct files_struct *files, unsigned int fd);
+
+/*
+ * In contrast to sys_close(), this stub does not check whether the syscall
+ * should or should not be restarted, but returns the raw error codes from
+ * __close_fd().
+ */
+static inline int ksys_close(unsigned int fd)
+{
+	return __close_fd(current->files, fd);
+}
+
+extern long do_sys_open(int dfd, const char __user *filename, int flags,
+			umode_t mode);
+
+static inline long ksys_open(const char __user *filename, int flags,
+			     umode_t mode)
+{
+	if (force_o_largefile())
+		flags |= O_LARGEFILE;
+	return do_sys_open(AT_FDCWD, filename, flags, mode);
+}
 
 #endif
