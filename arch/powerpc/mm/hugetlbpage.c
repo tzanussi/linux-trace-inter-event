@@ -553,9 +553,11 @@ unsigned long hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
 	struct hstate *hstate = hstate_file(file);
 	int mmu_psize = shift_to_mmu_psize(huge_page_shift(hstate));
 
+#ifdef CONFIG_PPC_RADIX_MMU
 	if (radix_enabled())
 		return radix__hugetlb_get_unmapped_area(file, addr, len,
 						       pgoff, flags);
+#endif
 	return slice_get_unmapped_area(addr, len, flags, mmu_psize, 1);
 }
 #endif
@@ -563,10 +565,12 @@ unsigned long hugetlb_get_unmapped_area(struct file *file, unsigned long addr,
 unsigned long vma_mmu_pagesize(struct vm_area_struct *vma)
 {
 #ifdef CONFIG_PPC_MM_SLICES
-	unsigned int psize = get_slice_psize(vma->vm_mm, vma->vm_start);
 	/* With radix we don't use slice, so derive it from vma*/
-	if (!radix_enabled())
+	if (!radix_enabled()) {
+		unsigned int psize = get_slice_psize(vma->vm_mm, vma->vm_start);
+
 		return 1UL << mmu_psize_to_shift(psize);
+	}
 #endif
 	if (!is_vm_hugetlb_page(vma))
 		return PAGE_SIZE;
