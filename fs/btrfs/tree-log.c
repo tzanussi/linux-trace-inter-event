@@ -21,12 +21,12 @@
 #include <linux/blkdev.h>
 #include <linux/list_sort.h>
 #include <linux/iversion.h>
+#include "ctree.h"
 #include "tree-log.h"
 #include "disk-io.h"
 #include "locking.h"
 #include "print-tree.h"
 #include "backref.h"
-#include "hash.h"
 #include "compression.h"
 #include "qgroup.h"
 #include "inode-map.h"
@@ -853,7 +853,6 @@ static noinline int drop_one_dir_item(struct btrfs_trans_handle *trans,
 				      struct btrfs_inode *dir,
 				      struct btrfs_dir_item *di)
 {
-	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct inode *inode;
 	char *name;
 	int name_len;
@@ -887,7 +886,7 @@ static noinline int drop_one_dir_item(struct btrfs_trans_handle *trans,
 	if (ret)
 		goto out;
 	else
-		ret = btrfs_run_delayed_items(trans, fs_info);
+		ret = btrfs_run_delayed_items(trans);
 out:
 	kfree(name);
 	iput(inode);
@@ -1007,7 +1006,6 @@ static inline int __add_inode_ref(struct btrfs_trans_handle *trans,
 				  u64 ref_index, char *name, int namelen,
 				  int *search_done)
 {
-	struct btrfs_fs_info *fs_info = root->fs_info;
 	int ret;
 	char *victim_name;
 	int victim_name_len;
@@ -1065,7 +1063,7 @@ again:
 				kfree(victim_name);
 				if (ret)
 					return ret;
-				ret = btrfs_run_delayed_items(trans, fs_info);
+				ret = btrfs_run_delayed_items(trans);
 				if (ret)
 					return ret;
 				*search_done = 1;
@@ -1136,8 +1134,7 @@ again:
 							victim_name_len);
 					if (!ret)
 						ret = btrfs_run_delayed_items(
-								  trans,
-								  fs_info);
+								  trans);
 				}
 				iput(victim_parent);
 				kfree(victim_name);
@@ -2098,7 +2095,6 @@ static noinline int check_item_in_log(struct btrfs_trans_handle *trans,
 				      struct inode *dir,
 				      struct btrfs_key *dir_key)
 {
-	struct btrfs_fs_info *fs_info = root->fs_info;
 	int ret;
 	struct extent_buffer *eb;
 	int slot;
@@ -2162,7 +2158,7 @@ again:
 			ret = btrfs_unlink_inode(trans, root, BTRFS_I(dir),
 					BTRFS_I(inode), name, name_len);
 			if (!ret)
-				ret = btrfs_run_delayed_items(trans, fs_info);
+				ret = btrfs_run_delayed_items(trans);
 			kfree(name);
 			iput(inode);
 			if (ret)
@@ -5517,7 +5513,6 @@ out:
  * the last committed transaction
  */
 static int btrfs_log_inode_parent(struct btrfs_trans_handle *trans,
-				  struct btrfs_root *root,
 				  struct btrfs_inode *inode,
 				  struct dentry *parent,
 				  const loff_t start,
@@ -5525,6 +5520,7 @@ static int btrfs_log_inode_parent(struct btrfs_trans_handle *trans,
 				  int inode_only,
 				  struct btrfs_log_ctx *ctx)
 {
+	struct btrfs_root *root = inode->root;
 	struct btrfs_fs_info *fs_info = root->fs_info;
 	struct super_block *sb;
 	struct dentry *old_parent = NULL;
@@ -5550,7 +5546,7 @@ static int btrfs_log_inode_parent(struct btrfs_trans_handle *trans,
 		goto end_no_trans;
 	}
 
-	if (root != inode->root || btrfs_root_refs(&root->root_item) == 0) {
+	if (btrfs_root_refs(&root->root_item) == 0) {
 		ret = 1;
 		goto end_no_trans;
 	}
@@ -5682,7 +5678,7 @@ end_no_trans:
  * data on disk.
  */
 int btrfs_log_dentry_safe(struct btrfs_trans_handle *trans,
-			  struct btrfs_root *root, struct dentry *dentry,
+			  struct dentry *dentry,
 			  const loff_t start,
 			  const loff_t end,
 			  struct btrfs_log_ctx *ctx)
@@ -5690,8 +5686,8 @@ int btrfs_log_dentry_safe(struct btrfs_trans_handle *trans,
 	struct dentry *parent = dget_parent(dentry);
 	int ret;
 
-	ret = btrfs_log_inode_parent(trans, root, BTRFS_I(d_inode(dentry)),
-			parent, start, end, LOG_INODE_ALL, ctx);
+	ret = btrfs_log_inode_parent(trans, BTRFS_I(d_inode(dentry)), parent,
+				     start, end, LOG_INODE_ALL, ctx);
 	dput(parent);
 
 	return ret;
@@ -5953,7 +5949,6 @@ int btrfs_log_new_name(struct btrfs_trans_handle *trans,
 			struct dentry *parent)
 {
 	struct btrfs_fs_info *fs_info = btrfs_sb(inode->vfs_inode.i_sb);
-	struct btrfs_root *root = inode->root;
 
 	/*
 	 * this will force the logging code to walk the dentry chain
@@ -5970,7 +5965,7 @@ int btrfs_log_new_name(struct btrfs_trans_handle *trans,
 	    (!old_dir || old_dir->logged_trans <= fs_info->last_trans_committed))
 		return 0;
 
-	return btrfs_log_inode_parent(trans, root, inode, parent, 0,
-				      LLONG_MAX, LOG_INODE_EXISTS, NULL);
+	return btrfs_log_inode_parent(trans, inode, parent, 0, LLONG_MAX,
+				      LOG_INODE_EXISTS, NULL);
 }
 
