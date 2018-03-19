@@ -1,0 +1,155 @@
+next/soc
+	patch
+		arm64: defconfig: add newly added accelerated crypto modules
+		arm64: defconfig: add support for Socionext SynQuacer based platforms
+		MAINTAINERS: Add entry for the Nuvoton NPCM architecture
+		arm: npcm: add basic support for Nuvoton BMCs
+	davinci/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-for-v4.17/soc
+	davinci/defconfig
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-for-v4.17/defconfig
+	patch
+		ARM: reorder mach-*/Kconfig inclusions
+		ARM: nspire: Remove unneeded nspire_map_io()
+		ARM: socfpga: PM: Drop useless check for PM_SUSPEND_STANDBY
+		MAINTAINERS: Add Spreadtrum SoC entry
+	stm32/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-soc-for-v4.17-1
+	stm32/defconfig
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-defconfig-for-v4.17-1
+	omap/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.17/soc-signed
+	omap/timer
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.17/timer-signed
+	omap/am-pm
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.17/am-pm-signed
+	omap/sysc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.17/ti-sysc-signed
+	samsung/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-soc-4.17
+	hisi/defconfig
+		git://github.com/hisilicon/linux-hisi tags/hisi-defconfig-for-4.17
+	at91/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.17-soc
+	pxa/soc
+		https://github.com/rjarzmik/linux tags/pxa-for-4.17
+		contains depends/nand/pxa3xx-removal
+	broadcom/defconfig
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.17/defconfig
+	patch
+		ARM: configs: add OXNAS v6 defconfig
+	imx/soc
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-soc-4.17
+	imx/defconfig
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-defconfig-4.17
+
+next/dt
+	patch
+		ARM: dts: artpec: disable Accelerator Coherency Port
+		ARM: dts: artpec: use 1 GiB RAM
+		ARM: dts: artpec: remove 0x prefix from clkctrl unit address
+		ARM: dts: artpec: migrate ethernet to stmmac binding
+		ARM: dts: artpec: add and utilize artpec6 pin controller
+		ARM: dts: artpec: add and utilize nbpfaxi DMA controllers
+		ARM: dts: artpec: add disabled node for PCIe endpoint mode
+		ARM: dts: artpec: add node for hardware crypto accelerator
+		arm: dts: add Nuvoton NPCM750 device tree
+	sti/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/pchotard/sti tags/sti-dt-for-v4.17-round1
+	davinci/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-for-v4.17/dt
+	patch
+		arm64: dts: Add hwspinlock node for Spreadtrum SC9860
+		arm64: dts: Add ADI device node for Spreadtrum SC9860
+		arm64: dts: Add pin controller node for Spreadtrum SC9860
+		arm64: dts: Add timer node for Spreadtrum SC9860
+		arm64: dts: Add watchdog device node for Spreadtrum SC9860
+		arm64: dts: Add DMA device node for Spreadtrum SC9860
+		arm64: dts: Add SC2731 PMIC dts file for Spreadtrum SC9860
+		arm: dts: replace 'linux,stdout-path' with 'stdout-path'
+		arm64: dts: replace 'linux,stdout-path' with 'stdout-path'
+	juno/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/juno-updates-4.17
+	omap/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.17/dt-signed
+	keystone/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/keystone_dts_for_4.17
+	omap/dt-sdhci
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/tmlind/linux-omap tags/omap-for-v4.17/dt-sdhci-signed
+	stm32/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/atorgue/stm32 tags/stm32-dt-for-v4.17-1
+	patch
+		ARM: dts: atlas7: Use generic uart-has-rtscts DT property
+	samsung/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt-4.17
+	samsung/dt64
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-dt64-4.17
+	xilinx/dt
+		https://github.com/Xilinx/linux-xlnx tags/xilinx-dt-for-4.17
+	hisi/dt
+		git://github.com/hisilicon/linux-hisi tags/hisi-arm64-dt-for-4.17
+	mvebu/dt
+		git://git.infradead.org/linux-mvebu tags/mvebu-dt-4.17-1
+	mvebu/dt64
+		git://git.infradead.org/linux-mvebu tags/mvebu-dt64-4.17-1
+	at91/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/abelloni/linux tags/at91-ab-4.17-dt
+	patch
+		ARM: dts: keystone-k2g: add watchdog support
+		ARM: dts: Keystone: add ECC error handler support
+	broadcom/dt
+		https://github.com/Broadcom/stblinux tags/arm-soc/for-4.17/devicetree
+	aspeed/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/joel/aspeed tags/aspeed-4.17-devicetree
+	sti/dt-2
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/pchotard/sti tags/sti-dt-for-v4.17-round2
+	uniphier/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/masahiroy/linux-uniphier tags/uniphier-dt-v4.17
+	imx/dt-clk
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt-newclk-4.17
+		contains imx/clk-driver
+	imx/dt
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt-4.17
+	imx/dt64
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-dt64-4.17
+
+next/drivers
+	patch
+		drivers/bus: Move Arm CCN PMU driver
+		drivers/bus: Split Arm CCI driver
+		perf/arm-cci: Simplify CPU hotplug
+		bus/arm-cci: Streamline devicetree handling a bit
+		perf/arm-cci: Clean up model discovery
+		perf/arm-cci: Untangle global cci_ctrl_base
+	drivers/reset
+		git://git.pengutronix.de/git/pza/linux tags/reset-for-4.17
+	drivers/scpi
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/scpi-updates-4.17
+	drivers/scmi
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/sudeep.holla/linux tags/scmi-updates-4.17
+	keystone/drivers
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/ssantosh/linux-keystone tags/soc_drivers_for_4.17
+	drivers/tee
+		https://git.linaro.org:/people/jens.wiklander/linux-tee tags/tee-drv-misc-for-v4.17
+	samsung/drivers
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/krzk/linux tags/samsung-drivers-4.17
+	patch
+		cpufreq: scmi: add thermal dependency
+	imx/drivers
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-drivers-4.17
+
+fixes
+	patch
+		ARM: ux500: Fix PMU IRQ regression
+	<no branch> (970656b3246d30955894951ed16bd658e42d8c24)
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/shawnguo/linux tags/imx-fixes-4.16-2
+	<no branch> (c4dc56be7e26040bfc60ce73425353516a356955)
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/nsekhar/linux-davinci tags/davinci-fixes-for-v4.16
+	<no branch> (c535d632aecc6359d072374675a7787cbe71773b)
+		git://git.infradead.org/linux-mvebu tags/mvebu-fixes-4.16-2
+	<no branch> (4e943a890cef42e90f43ce6be64728a290b97c55)
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.16-rockchip-dts32fixes-2
+	<no branch> (835a1d5cdefffe08bec46efff11daea9b389baa9)
+		ssh://gitolite.kernel.org/pub/scm/linux/kernel/git/mmind/linux-rockchip tags/v4.16-rockchip-dts64fixes-2
+	patch
+		ARM: dts: aspeed: Add default memory node
