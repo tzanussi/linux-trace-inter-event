@@ -993,6 +993,66 @@ out:
 	return error;
 }
 
+struct posix_change_lock_owners_arg {
+	struct files_struct *old;
+	struct files_struct *new;
+};
+
+static int posix_change_lock_owners_cb(const void *varg, struct file *file,
+					  unsigned int fd)
+{
+	const struct posix_change_lock_owners_arg *arg = varg;
+	struct inode *inode = file_inode(file);
+	struct file_lock_context *ctx;
+	struct file_lock *fl, *tmp;
+
+	/* If there is no context, then no locks need to be changed */
+	ctx = locks_get_lock_context(inode, F_UNLCK);
+	if (!ctx)
+		return 0;
+
+	percpu_down_read_preempt_disable(&file_rwsem);
+	spin_lock(&ctx->flc_lock);
+	/* Find the first lock with the old owner */
+	list_for_each_entry(fl, &ctx->flc_posix, fl_list) {
+		if (fl->fl_owner == arg->old)
+			break;
+	}
+
+	list_for_each_entry_safe_from(fl, tmp, &ctx->flc_posix, fl_list) {
+		if (fl->fl_owner != arg->old)
+			break;
+
+		/* This should only be used for normal userland lockmanager */
+		if (fl->fl_lmops) {
+			WARN_ON_ONCE(1);
+			break;
+		}
+		fl->fl_owner = arg->new;
+	}
+	spin_unlock(&ctx->flc_lock);
+	percpu_up_read_preempt_enable(&file_rwsem);
+	return 0;
+}
+
+/**
+ * posix_change_lock_owners - change lock owners from old files_struct to new
+ * @new: new files struct to own locks
+ * @old: old files struct that previously held locks
+ *
+ * On execve, a process may end up with a new files_struct. In that case, we
+ * must change all of the locks that were owned by the previous files_struct
+ * to the new one.
+ */
+void posix_change_lock_owners(struct files_struct *new,
+			      struct files_struct *old)
+{
+	struct posix_change_lock_owners_arg arg = { .old = old,
+						    .new = new };
+
+	iterate_fd(new, 0, posix_change_lock_owners_cb, &arg);
+}
+
 static int posix_lock_inode(struct inode *inode, struct file_lock *request,
 			    struct file_lock *conflock)
 {
