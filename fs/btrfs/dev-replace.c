@@ -44,7 +44,6 @@ static void btrfs_dev_replace_update_device_in_mapping_tree(
 						struct btrfs_fs_info *fs_info,
 						struct btrfs_device *srcdev,
 						struct btrfs_device *tgtdev);
-static u64 __btrfs_dev_replace_cancel(struct btrfs_fs_info *fs_info);
 static int btrfs_dev_replace_kthread(void *data);
 static int btrfs_dev_replace_continue_on_mount(struct btrfs_fs_info *fs_info);
 
@@ -174,8 +173,14 @@ no_valid_dev_replace_entry_found:
 			}
 			set_bit(BTRFS_DEV_STATE_REPLACE_TGT,
 				&dev_replace->tgtdev->dev_state);
-			btrfs_init_dev_replace_tgtdev_for_resume(fs_info,
-				dev_replace->tgtdev);
+
+			WARN_ON(fs_info->fs_devices->rw_devices == 0);
+			dev_replace->tgtdev->io_width = fs_info->sectorsize;
+			dev_replace->tgtdev->io_align = fs_info->sectorsize;
+			dev_replace->tgtdev->sector_size = fs_info->sectorsize;
+			dev_replace->tgtdev->fs_info = fs_info;
+			set_bit(BTRFS_DEV_STATE_IN_FS_METADATA,
+				&dev_replace->tgtdev->dev_state);
 		}
 		break;
 	}
@@ -307,7 +312,7 @@ void btrfs_after_dev_replace_commit(struct btrfs_fs_info *fs_info)
 
 static char* btrfs_dev_name(struct btrfs_device *device)
 {
-	if (test_bit(BTRFS_DEV_STATE_MISSING, &device->dev_state))
+	if (!device || test_bit(BTRFS_DEV_STATE_MISSING, &device->dev_state))
 		return "<missing disk>";
 	else
 		return rcu_str_deref(device->name);
@@ -694,20 +699,14 @@ void btrfs_dev_replace_status(struct btrfs_fs_info *fs_info,
 	btrfs_dev_replace_unlock(dev_replace, 0);
 }
 
-int btrfs_dev_replace_cancel(struct btrfs_fs_info *fs_info,
-			     struct btrfs_ioctl_dev_replace_args *args)
-{
-	args->result = __btrfs_dev_replace_cancel(fs_info);
-	return 0;
-}
-
-static u64 __btrfs_dev_replace_cancel(struct btrfs_fs_info *fs_info)
+int btrfs_dev_replace_cancel(struct btrfs_fs_info *fs_info)
 {
 	struct btrfs_dev_replace *dev_replace = &fs_info->dev_replace;
 	struct btrfs_device *tgt_device = NULL;
+	struct btrfs_device *src_device = NULL;
 	struct btrfs_trans_handle *trans;
 	struct btrfs_root *root = fs_info->tree_root;
-	u64 result;
+	int result;
 	int ret;
 
 	if (sb_rdonly(fs_info->sb))
@@ -726,6 +725,7 @@ static u64 __btrfs_dev_replace_cancel(struct btrfs_fs_info *fs_info)
 	case BTRFS_IOCTL_DEV_REPLACE_STATE_SUSPENDED:
 		result = BTRFS_IOCTL_DEV_REPLACE_RESULT_NO_ERROR;
 		tgt_device = dev_replace->tgtdev;
+		src_device = dev_replace->srcdev;
 		dev_replace->tgtdev = NULL;
 		dev_replace->srcdev = NULL;
 		break;
@@ -743,6 +743,12 @@ static u64 __btrfs_dev_replace_cancel(struct btrfs_fs_info *fs_info)
 	}
 	ret = btrfs_commit_transaction(trans);
 	WARN_ON(ret);
+
+	btrfs_info_in_rcu(fs_info,
+		"dev_replace from %s (devid %llu) to %s canceled",
+		btrfs_dev_name(src_device), src_device->devid,
+		btrfs_dev_name(tgt_device));
+
 	if (tgt_device)
 		btrfs_destroy_dev_replace_tgtdev(fs_info, tgt_device);
 
