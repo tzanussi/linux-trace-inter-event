@@ -949,11 +949,6 @@ struct pci_dev *pci_get_subsys(unsigned int vendor, unsigned int device,
 struct pci_dev *pci_get_slot(struct pci_bus *bus, unsigned int devfn);
 struct pci_dev *pci_get_domain_bus_and_slot(int domain, unsigned int bus,
 					    unsigned int devfn);
-static inline struct pci_dev *pci_get_bus_and_slot(unsigned int bus,
-						   unsigned int devfn)
-{
-	return pci_get_domain_bus_and_slot(0, bus, devfn);
-}
 struct pci_dev *pci_get_class(unsigned int class, struct pci_dev *from);
 int pci_dev_present(const struct pci_device_id *ids);
 
@@ -1082,7 +1077,7 @@ int pcie_get_mps(struct pci_dev *dev);
 int pcie_set_mps(struct pci_dev *dev, int mps);
 int pcie_get_minimum_link(struct pci_dev *dev, enum pci_bus_speed *speed,
 			  enum pcie_link_width *width);
-void pcie_flr(struct pci_dev *dev);
+int pcie_flr(struct pci_dev *dev);
 int __pci_reset_function_locked(struct pci_dev *dev);
 int pci_reset_function(struct pci_dev *dev);
 int pci_reset_function_locked(struct pci_dev *dev);
@@ -1095,7 +1090,7 @@ int pci_reset_bus(struct pci_bus *bus);
 int pci_try_reset_bus(struct pci_bus *bus);
 void pci_reset_secondary_bus(struct pci_dev *dev);
 void pcibios_reset_secondary_bus(struct pci_dev *dev);
-void pci_reset_bridge_secondary_bus(struct pci_dev *dev);
+int pci_reset_bridge_secondary_bus(struct pci_dev *dev);
 void pci_update_resource(struct pci_dev *dev, int resno);
 int __must_check pci_assign_resource(struct pci_dev *dev, int i);
 int __must_check pci_reassign_resource(struct pci_dev *dev, int i, resource_size_t add_size, resource_size_t align);
@@ -1659,9 +1654,6 @@ static inline void pci_unblock_cfg_access(struct pci_dev *dev) { }
 static inline struct pci_bus *pci_find_next_bus(const struct pci_bus *from)
 { return NULL; }
 static inline struct pci_dev *pci_get_slot(struct pci_bus *bus,
-						unsigned int devfn)
-{ return NULL; }
-static inline struct pci_dev *pci_get_bus_and_slot(unsigned int bus,
 						unsigned int devfn)
 { return NULL; }
 static inline struct pci_dev *pci_get_domain_bus_and_slot(int domain,
@@ -2280,41 +2272,9 @@ static inline bool pci_is_thunderbolt_attached(struct pci_dev *pdev)
 	return false;
 }
 
-/**
- * pci_uevent_ers - emit a uevent during recovery path of pci device
- * @pdev: pci device to check
- * @err_type: type of error event
- *
- */
-static inline void pci_uevent_ers(struct pci_dev *pdev,
-				  enum  pci_ers_result err_type)
-{
-	int idx = 0;
-	char *envp[3];
-
-	switch (err_type) {
-	case PCI_ERS_RESULT_NONE:
-	case PCI_ERS_RESULT_CAN_RECOVER:
-		envp[idx++] = "ERROR_EVENT=BEGIN_RECOVERY";
-		envp[idx++] = "DEVICE_ONLINE=0";
-		break;
-	case PCI_ERS_RESULT_RECOVERED:
-		envp[idx++] = "ERROR_EVENT=SUCCESSFUL_RECOVERY";
-		envp[idx++] = "DEVICE_ONLINE=1";
-		break;
-	case PCI_ERS_RESULT_DISCONNECT:
-		envp[idx++] = "ERROR_EVENT=FAILED_RECOVERY";
-		envp[idx++] = "DEVICE_ONLINE=0";
-		break;
-	default:
-		break;
-	}
-
-	if (idx > 0) {
-		envp[idx++] = NULL;
-		kobject_uevent_env(&pdev->dev.kobj, KOBJ_CHANGE, envp);
-	}
-}
+#if defined(CONFIG_PCIEAER) || defined(CONFIG_EEH)
+void pci_uevent_ers(struct pci_dev *pdev, enum  pci_ers_result err_type);
+#endif
 
 /* Provide the legacy pci_dma_* API */
 #include <linux/pci-dma-compat.h>
