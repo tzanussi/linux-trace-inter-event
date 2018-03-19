@@ -2442,6 +2442,7 @@ extern int sync_blockdev(struct block_device *bdev);
 extern void kill_bdev(struct block_device *);
 extern struct super_block *freeze_bdev(struct block_device *);
 extern void emergency_thaw_all(void);
+extern void emergency_thaw_bdev(struct super_block *sb);
 extern int thaw_bdev(struct block_device *bdev, struct super_block *sb);
 extern int fsync_bdev(struct block_device *);
 
@@ -2463,6 +2464,11 @@ static inline struct super_block *freeze_bdev(struct block_device *sb)
 }
 
 static inline int thaw_bdev(struct block_device *bdev, struct super_block *sb)
+{
+	return 0;
+}
+
+static inline int emergency_thaw_bdev(struct super_block *sb)
 {
 	return 0;
 }
