@@ -163,9 +163,10 @@ static inline enum cp_reason_type need_do_checkpoint(struct inode *inode)
 		cp_reason = CP_NODE_NEED_CP;
 	else if (test_opt(sbi, FASTBOOT))
 		cp_reason = CP_FASTBOOT_MODE;
-	else if (sbi->active_logs == 2)
+	else if (F2FS_OPTION(sbi).active_logs == 2)
 		cp_reason = CP_SPEC_LOG_NUM;
-	else if (need_dentry_mark(sbi, inode->i_ino) &&
+	else if (F2FS_OPTION(sbi).fsync_mode == FSYNC_MODE_STRICT &&
+		need_dentry_mark(sbi, inode->i_ino) &&
 		exist_written_data(sbi, F2FS_I(inode)->i_pino, TRANS_DIR_INO))
 		cp_reason = CP_RECOVER_DIR;
 
@@ -479,6 +480,9 @@ static int f2fs_file_open(struct inode *inode, struct file *filp)
 
 	if (err)
 		return err;
+
+	filp->f_mode |= FMODE_NOWAIT;
+
 	return dquot_file_open(inode, filp);
 }
 
@@ -1348,8 +1352,12 @@ static int f2fs_zero_range(struct inode *inode, loff_t offset, loff_t len,
 	}
 
 out:
-	if (!(mode & FALLOC_FL_KEEP_SIZE) && i_size_read(inode) < new_size)
-		f2fs_i_size_write(inode, new_size);
+	if (new_size > i_size_read(inode)) {
+		if (mode & FALLOC_FL_KEEP_SIZE)
+			file_set_keep_isize(inode);
+		else
+			f2fs_i_size_write(inode, new_size);
+	}
 out_sem:
 	up_write(&F2FS_I(inode)->i_mmap_sem);
 
@@ -1711,6 +1719,8 @@ static int f2fs_ioc_commit_atomic_write(struct file *filp)
 
 	inode_lock(inode);
 
+	down_write(&F2FS_I(inode)->dio_rwsem[WRITE]);
+
 	if (f2fs_is_volatile_file(inode))
 		goto err_out;
 
@@ -1729,6 +1739,7 @@ static int f2fs_ioc_commit_atomic_write(struct file *filp)
 		ret = f2fs_do_sync_file(filp, 0, LLONG_MAX, 1, false);
 	}
 err_out:
+	up_write(&F2FS_I(inode)->dio_rwsem[WRITE]);
 	inode_unlock(inode);
 	mnt_drop_write_file(filp);
 	return ret;
@@ -1938,7 +1949,7 @@ static int f2fs_ioc_set_encryption_policy(struct file *filp, unsigned long arg)
 {
 	struct inode *inode = file_inode(filp);
 
-	if (!f2fs_sb_has_crypto(inode->i_sb))
+	if (!f2fs_sb_has_encrypt(inode->i_sb))
 		return -EOPNOTSUPP;
 
 	f2fs_update_time(F2FS_I_SB(inode), REQ_TIME);
@@ -1948,7 +1959,7 @@ static int f2fs_ioc_set_encryption_policy(struct file *filp, unsigned long arg)
 
 static int f2fs_ioc_get_encryption_policy(struct file *filp, unsigned long arg)
 {
-	if (!f2fs_sb_has_crypto(file_inode(filp)->i_sb))
+	if (!f2fs_sb_has_encrypt(file_inode(filp)->i_sb))
 		return -EOPNOTSUPP;
 	return fscrypt_ioctl_get_policy(filp, (void __user *)arg);
 }
@@ -1959,15 +1970,17 @@ static int f2fs_ioc_get_encryption_pwsalt(struct file *filp, unsigned long arg)
 	struct f2fs_sb_info *sbi = F2FS_I_SB(inode);
 	int err;
 
-	if (!f2fs_sb_has_crypto(inode->i_sb))
+	if (!f2fs_sb_has_encrypt(inode->i_sb))
 		return -EOPNOTSUPP;
-
-	if (uuid_is_nonzero(sbi->raw_super->encrypt_pw_salt))
-		goto got_it;
 
 	err = mnt_want_write_file(filp);
 	if (err)
 		return err;
+
+	down_write(&sbi->sb_lock);
+
+	if (uuid_is_nonzero(sbi->raw_super->encrypt_pw_salt))
+		goto got_it;
 
 	/* update superblock with uuid */
 	generate_random_uuid(sbi->raw_super->encrypt_pw_salt);
@@ -1976,15 +1989,16 @@ static int f2fs_ioc_get_encryption_pwsalt(struct file *filp, unsigned long arg)
 	if (err) {
 		/* undo new data */
 		memset(sbi->raw_super->encrypt_pw_salt, 0, 16);
-		mnt_drop_write_file(filp);
-		return err;
+		goto out_err;
 	}
-	mnt_drop_write_file(filp);
 got_it:
 	if (copy_to_user((__u8 __user *)arg, sbi->raw_super->encrypt_pw_salt,
 									16))
-		return -EFAULT;
-	return 0;
+		err = -EFAULT;
+out_err:
+	up_write(&sbi->sb_lock);
+	mnt_drop_write_file(filp);
+	return err;
 }
 
 static int f2fs_ioc_gc(struct file *filp, unsigned long arg)
@@ -2885,7 +2899,15 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	if (unlikely(f2fs_cp_error(F2FS_I_SB(inode))))
 		return -EIO;
 
-	inode_lock(inode);
+	if ((iocb->ki_flags & IOCB_NOWAIT) && !(iocb->ki_flags & IOCB_DIRECT))
+		return -EINVAL;
+
+	if (!inode_trylock(inode)) {
+		if (iocb->ki_flags & IOCB_NOWAIT)
+			return -EAGAIN;
+		inode_lock(inode);
+	}
+
 	ret = generic_write_checks(iocb, from);
 	if (ret > 0) {
 		int err;
@@ -2893,11 +2915,23 @@ static ssize_t f2fs_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
 		if (iov_iter_fault_in_readable(from, iov_iter_count(from)))
 			set_inode_flag(inode, FI_NO_PREALLOC);
 
-		err = f2fs_preallocate_blocks(iocb, from);
-		if (err) {
-			clear_inode_flag(inode, FI_NO_PREALLOC);
-			inode_unlock(inode);
-			return err;
+		if ((iocb->ki_flags & IOCB_NOWAIT) &&
+			(iocb->ki_flags & IOCB_DIRECT)) {
+				if (!f2fs_overwrite_io(inode, iocb->ki_pos,
+						iov_iter_count(from)) ||
+					f2fs_has_inline_data(inode) ||
+					f2fs_force_buffered_io(inode, WRITE)) {
+						inode_unlock(inode);
+						return -EAGAIN;
+				}
+
+		} else {
+			err = f2fs_preallocate_blocks(iocb, from);
+			if (err) {
+				clear_inode_flag(inode, FI_NO_PREALLOC);
+				inode_unlock(inode);
+				return err;
+			}
 		}
 		blk_start_plug(&plug);
 		ret = __generic_file_write_iter(iocb, from);

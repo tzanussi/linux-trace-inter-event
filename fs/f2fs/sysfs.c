@@ -58,7 +58,7 @@ static unsigned char *__struct_ptr(struct f2fs_sb_info *sbi, int struct_type)
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 	else if (struct_type == FAULT_INFO_RATE ||
 					struct_type == FAULT_INFO_TYPE)
-		return (unsigned char *)&sbi->fault_info;
+		return (unsigned char *)&F2FS_OPTION(sbi).fault_info;
 #endif
 	return NULL;
 }
@@ -92,10 +92,10 @@ static ssize_t features_show(struct f2fs_attr *a,
 	if (!sb->s_bdev->bd_part)
 		return snprintf(buf, PAGE_SIZE, "0\n");
 
-	if (f2fs_sb_has_crypto(sb))
+	if (f2fs_sb_has_encrypt(sb))
 		len += snprintf(buf, PAGE_SIZE - len, "%s",
 						"encryption");
-	if (f2fs_sb_mounted_blkzoned(sb))
+	if (f2fs_sb_has_blkzoned(sb))
 		len += snprintf(buf + len, PAGE_SIZE - len, "%s%s",
 				len ? ", " : "", "blkzoned");
 	if (f2fs_sb_has_extra_attr(sb))
@@ -136,6 +136,27 @@ static ssize_t f2fs_sbi_show(struct f2fs_attr *a,
 	if (!ptr)
 		return -EINVAL;
 
+	if (!strcmp(a->attr.name, "extension_list")) {
+		__u8 (*extlist)[F2FS_EXTENSION_LEN] =
+					sbi->raw_super->extension_list;
+		int cold_count = le32_to_cpu(sbi->raw_super->extension_count);
+		int hot_count = sbi->raw_super->hot_ext_count;
+		int len = 0, i;
+
+		len += snprintf(buf + len, PAGE_SIZE - len,
+						"cold file extenstion:\n");
+		for (i = 0; i < cold_count; i++)
+			len += snprintf(buf + len, PAGE_SIZE - len, "%s\n",
+								extlist[i]);
+
+		len += snprintf(buf + len, PAGE_SIZE - len,
+						"hot file extenstion:\n");
+		for (i = cold_count; i < cold_count + hot_count; i++)
+			len += snprintf(buf + len, PAGE_SIZE - len, "%s\n",
+								extlist[i]);
+		return len;
+	}
+
 	ui = (unsigned int *)(ptr + a->offset);
 
 	return snprintf(buf, PAGE_SIZE, "%u\n", *ui);
@@ -154,6 +175,41 @@ static ssize_t f2fs_sbi_store(struct f2fs_attr *a,
 	if (!ptr)
 		return -EINVAL;
 
+	if (!strcmp(a->attr.name, "extension_list")) {
+		const char *name = strim((char *)buf);
+		bool set = true, hot;
+
+		if (!strncmp(name, "[h]", 3))
+			hot = true;
+		else if (!strncmp(name, "[c]", 3))
+			hot = false;
+		else
+			return -EINVAL;
+
+		name += 3;
+
+		if (*name == '!') {
+			name++;
+			set = false;
+		}
+
+		if (strlen(name) >= F2FS_EXTENSION_LEN)
+			return -EINVAL;
+
+		down_write(&sbi->sb_lock);
+
+		ret = update_extension_list(sbi, name, hot, set);
+		if (ret)
+			goto out;
+
+		ret = f2fs_commit_super(sbi, false);
+		if (ret)
+			update_extension_list(sbi, name, hot, !set);
+out:
+		up_write(&sbi->sb_lock);
+		return ret ? ret : count;
+	}
+
 	ui = (unsigned int *)(ptr + a->offset);
 
 	ret = kstrtoul(skip_spaces(buf), 0, &t);
@@ -166,7 +222,7 @@ static ssize_t f2fs_sbi_store(struct f2fs_attr *a,
 	if (a->struct_type == RESERVED_BLOCKS) {
 		spin_lock(&sbi->stat_lock);
 		if (t > (unsigned long)(sbi->user_block_count -
-					sbi->root_reserved_blocks)) {
+				F2FS_OPTION(sbi).root_reserved_blocks)) {
 			spin_unlock(&sbi->stat_lock);
 			return -EINVAL;
 		}
@@ -307,6 +363,7 @@ F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, idle_interval, interval_time[REQ_TIME]);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, iostat_enable, iostat_enable);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, readdir_ra, readdir_ra);
 F2FS_RW_ATTR(F2FS_SBI, f2fs_sb_info, gc_pin_file_thresh, gc_pin_file_threshold);
+F2FS_RW_ATTR(F2FS_SBI, f2fs_super_block, extension_list, extension_list);
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 F2FS_RW_ATTR(FAULT_INFO_RATE, f2fs_fault_info, inject_rate, inject_rate);
 F2FS_RW_ATTR(FAULT_INFO_TYPE, f2fs_fault_info, inject_type, inject_type);
@@ -357,6 +414,7 @@ static struct attribute *f2fs_attrs[] = {
 	ATTR_LIST(iostat_enable),
 	ATTR_LIST(readdir_ra),
 	ATTR_LIST(gc_pin_file_thresh),
+	ATTR_LIST(extension_list),
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 	ATTR_LIST(inject_rate),
 	ATTR_LIST(inject_type),
