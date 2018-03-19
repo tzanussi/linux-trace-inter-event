@@ -306,8 +306,8 @@ static void adpt_release(adpt_hba *pHba)
 {
 	scsi_remove_host(pHba->host);
 //	adpt_i2o_quiesce_hba(pHba);
-	adpt_i2o_delete_hba(pHba);
 	scsi_host_put(pHba->host);
+	adpt_i2o_delete_hba(pHba);
 }
 
 
