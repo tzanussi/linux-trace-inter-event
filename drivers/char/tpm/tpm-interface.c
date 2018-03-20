@@ -29,7 +29,6 @@
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
 #include <linux/freezer.h>
-#include <linux/pm_runtime.h>
 #include <linux/tpm_eventlog.h>
 
 #include "tpm.h"
@@ -369,10 +368,41 @@ err_len:
 	return -EINVAL;
 }
 
+static int tpm_request_locality(struct tpm_chip *chip)
+{
+	int rc;
+
+	if (!chip->ops->request_locality)
+		return 0;
+
+	rc = chip->ops->request_locality(chip, 0);
+	if (rc < 0)
+		return rc;
+
+	chip->locality = rc;
+
+	return 0;
+}
+
+static void tpm_relinquish_locality(struct tpm_chip *chip)
+{
+	int rc;
+
+	if (!chip->ops->relinquish_locality)
+		return;
+
+	rc = chip->ops->relinquish_locality(chip, chip->locality);
+	if (rc)
+		dev_err(&chip->dev, "%s: : error %d\n", __func__, rc);
+
+	chip->locality = -1;
+}
+
 /**
- * tmp_transmit - Internal kernel interface to transmit TPM commands.
+ * tpm_transmit - Internal kernel interface to transmit TPM commands.
  *
  * @chip: TPM chip to use
+ * @space: tpm space
  * @buf: TPM command buffer
  * @bufsiz: length of the TPM command buffer
  * @flags: tpm transmit flags - bitmap
@@ -422,8 +452,6 @@ ssize_t tpm_transmit(struct tpm_chip *chip, struct tpm_space *space,
 	if (!(flags & TPM_TRANSMIT_UNLOCKED))
 		mutex_lock(&chip->tpm_mutex);
 
-	if (chip->dev.parent)
-		pm_runtime_get_sync(chip->dev.parent);
 
 	if (chip->ops->clk_enable != NULL)
 		chip->ops->clk_enable(chip, true);
@@ -431,19 +459,23 @@ ssize_t tpm_transmit(struct tpm_chip *chip, struct tpm_space *space,
 	/* Store the decision as chip->locality will be changed. */
 	need_locality = chip->locality == -1;
 
-	if (!(flags & TPM_TRANSMIT_RAW) &&
-	    need_locality && chip->ops->request_locality)  {
-		rc = chip->ops->request_locality(chip, 0);
+	if (!(flags & TPM_TRANSMIT_RAW) && need_locality) {
+		rc = tpm_request_locality(chip);
 		if (rc < 0)
 			goto out_no_locality;
-		chip->locality = rc;
+	}
+
+	if (chip->ops->cmd_ready) {
+		rc = chip->ops->cmd_ready(chip);
+		if (rc)
+			goto out;
 	}
 
 	rc = tpm2_prepare_space(chip, space, ordinal, buf);
 	if (rc)
 		goto out;
 
-	rc = chip->ops->send(chip, (u8 *) buf, count);
+	rc = chip->ops->send(chip, buf, count);
 	if (rc < 0) {
 		if (rc != -EPIPE)
 			dev_err(&chip->dev,
@@ -480,7 +512,7 @@ ssize_t tpm_transmit(struct tpm_chip *chip, struct tpm_space *space,
 	goto out;
 
 out_recv:
-	len = chip->ops->recv(chip, (u8 *) buf, bufsiz);
+	len = chip->ops->recv(chip, buf, bufsiz);
 	if (len < 0) {
 		rc = len;
 		dev_err(&chip->dev,
@@ -499,16 +531,18 @@ out_recv:
 	rc = tpm2_commit_space(chip, space, ordinal, buf, &len);
 
 out:
-	if (need_locality && chip->ops->relinquish_locality) {
-		chip->ops->relinquish_locality(chip, chip->locality);
-		chip->locality = -1;
+	if (chip->ops->go_idle) {
+		rc = chip->ops->go_idle(chip);
+		if (rc)
+			goto out;
 	}
+
+	if (need_locality)
+		tpm_relinquish_locality(chip);
+
 out_no_locality:
 	if (chip->ops->clk_enable != NULL)
 		chip->ops->clk_enable(chip, false);
-
-	if (chip->dev.parent)
-		pm_runtime_put_sync(chip->dev.parent);
 
 	if (!(flags & TPM_TRANSMIT_UNLOCKED))
 		mutex_unlock(&chip->tpm_mutex);
@@ -516,10 +550,11 @@ out_no_locality:
 }
 
 /**
- * tmp_transmit_cmd - send a tpm command to the device
+ * tpm_transmit_cmd - send a tpm command to the device
  *    The function extracts tpm out header return code
  *
  * @chip: TPM chip to use
+ * @space: tpm space
  * @buf: TPM command buffer
  * @bufsiz: length of the buffer
  * @min_rsp_body_length: minimum expected length of response body
@@ -532,7 +567,7 @@ out_no_locality:
  *     A positive number for a TPM error.
  */
 ssize_t tpm_transmit_cmd(struct tpm_chip *chip, struct tpm_space *space,
-			 const void *buf, size_t bufsiz,
+			 void *buf, size_t bufsiz,
 			 size_t min_rsp_body_length, unsigned int flags,
 			 const char *desc)
 {
@@ -540,7 +575,7 @@ ssize_t tpm_transmit_cmd(struct tpm_chip *chip, struct tpm_space *space,
 	int err;
 	ssize_t len;
 
-	len = tpm_transmit(chip, space, (u8 *)buf, bufsiz, flags);
+	len = tpm_transmit(chip, space, buf, bufsiz, flags);
 	if (len <  0)
 		return len;
 
@@ -666,6 +701,8 @@ int tpm_get_timeouts(struct tpm_chip *chip)
 		    msecs_to_jiffies(TPM2_DURATION_MEDIUM);
 		chip->duration[TPM_LONG] =
 		    msecs_to_jiffies(TPM2_DURATION_LONG);
+		chip->duration[TPM_LONG_LONG] =
+		    msecs_to_jiffies(TPM2_DURATION_LONG_LONG);
 
 		chip->flags |= TPM_CHIP_FLAG_HAVE_TIMEOUTS;
 		return 0;
@@ -754,6 +791,7 @@ int tpm_get_timeouts(struct tpm_chip *chip)
 		usecs_to_jiffies(be32_to_cpu(cap.duration.tpm_medium));
 	chip->duration[TPM_LONG] =
 		usecs_to_jiffies(be32_to_cpu(cap.duration.tpm_long));
+	chip->duration[TPM_LONG_LONG] = 0; /* not used under 1.2 */
 
 	/* The Broadcom BCM0102 chipset in a Dell Latitude D820 gets the above
 	 * value wrong and apparently reports msecs rather than usecs. So we
