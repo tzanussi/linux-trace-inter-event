@@ -46,10 +46,10 @@ void dump_mm(const struct mm_struct *mm);
 #define VM_BUG_ON_PAGE(cond, page) VM_BUG_ON(cond)
 #define VM_BUG_ON_VMA(cond, vma) VM_BUG_ON(cond)
 #define VM_BUG_ON_MM(cond, mm) VM_BUG_ON(cond)
-#define VM_WARN_ON(cond) BUILD_BUG_ON_INVALID(cond)
-#define VM_WARN_ON_ONCE(cond) BUILD_BUG_ON_INVALID(cond)
-#define VM_WARN_ONCE(cond, format...) BUILD_BUG_ON_INVALID(cond)
-#define VM_WARN(cond, format...) BUILD_BUG_ON_INVALID(cond)
+#define VM_WARN_ON(cond) ({ BUILD_BUG_ON_INVALID(cond); 0; })
+#define VM_WARN_ON_ONCE(cond) ({ BUILD_BUG_ON_INVALID(cond); 0; })
+#define VM_WARN_ONCE(cond, format...) ({ BUILD_BUG_ON_INVALID(cond); 0; })
+#define VM_WARN(cond, format...) ({ BUILD_BUG_ON_INVALID(cond); 0; })
 #endif
 
 #ifdef CONFIG_DEBUG_VIRTUAL

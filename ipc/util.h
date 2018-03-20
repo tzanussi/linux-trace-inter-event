@@ -205,6 +205,7 @@ int ipcget(struct ipc_namespace *ns, struct ipc_ids *ids,
 			const struct ipc_ops *ops, struct ipc_params *params);
 void free_ipcs(struct ipc_namespace *ns, struct ipc_ids *ids,
 		void (*free)(struct ipc_namespace *, struct kern_ipc_perm *));
+extern void sem_check_semmni(struct ctl_table *table, struct ipc_namespace *ns);
 
 #ifdef CONFIG_COMPAT
 #include <linux/compat.h>
