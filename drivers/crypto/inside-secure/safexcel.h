@@ -551,10 +551,8 @@ struct safexcel_crypto_priv {
 		struct crypto_queue queue;
 		spinlock_t queue_lock;
 
-		/* Number of requests in the engine that needs the threshold
-		 * interrupt to be set up.
-		 */
-		int requests_left;
+		/* Number of requests in the engine. */
+		int requests;
 
 		/* The ring is currently handling at least one request */
 		bool busy;
@@ -580,12 +578,6 @@ struct safexcel_context {
 	int ring;
 	bool needs_inv;
 	bool exit_inv;
-
-	/* Used for ahash requests */
-	dma_addr_t result_dma;
-	void *cache;
-	dma_addr_t cache_dma;
-	unsigned int cache_sz;
 };
 
 /*
@@ -609,9 +601,6 @@ struct safexcel_inv_result {
 
 void safexcel_dequeue(struct safexcel_crypto_priv *priv, int ring);
 void safexcel_complete(struct safexcel_crypto_priv *priv, int ring);
-void safexcel_free_context(struct safexcel_crypto_priv *priv,
-				  struct crypto_async_request *req,
-				  int result_sz);
 int safexcel_invalidate_cache(struct crypto_async_request *async,
 			      struct safexcel_crypto_priv *priv,
 			      dma_addr_t ctxr_dma, int ring,
