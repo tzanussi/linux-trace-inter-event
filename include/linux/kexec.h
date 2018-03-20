@@ -135,6 +135,11 @@ struct kexec_file_ops {
 #endif
 };
 
+extern const struct kexec_file_ops * const kexec_file_loaders[];
+
+int kexec_image_probe_default(struct kimage *image, void *buf,
+			      unsigned long buf_len);
+
 /**
  * struct kexec_buf - parameters for finding a place for a buffer in memory
  * @image:	kexec image in which memory to search.
@@ -163,6 +168,25 @@ int __weak arch_kexec_walk_mem(struct kexec_buf *kbuf,
 			       int (*func)(struct resource *, void *));
 extern int kexec_add_buffer(struct kexec_buf *kbuf);
 int kexec_locate_mem_hole(struct kexec_buf *kbuf);
+
+/* Alignment required for elf header segment */
+#define ELF_CORE_HEADER_ALIGN   4096
+
+struct crash_mem_range {
+	u64 start, end;
+};
+
+struct crash_mem {
+	unsigned int max_nr_ranges;
+	unsigned int nr_ranges;
+	struct crash_mem_range ranges[0];
+};
+
+extern int crash_exclude_mem_range(struct crash_mem *mem,
+				   unsigned long long mstart,
+				   unsigned long long mend);
+extern int crash_prepare_elf64_headers(struct crash_mem *mem, int kernel_map,
+				       void **addr, unsigned long *sz);
 #endif /* CONFIG_KEXEC_FILE */
 
 struct kimage {
@@ -209,7 +233,7 @@ struct kimage {
 	unsigned long cmdline_buf_len;
 
 	/* File operations provided by image loader */
-	struct kexec_file_ops *fops;
+	const struct kexec_file_ops *fops;
 
 	/* Image loader handling the kernel can store a pointer here */
 	void *image_loader_data;
@@ -277,12 +301,6 @@ int crash_shrink_memory(unsigned long new_size);
 size_t crash_get_memory_size(void);
 void crash_free_reserved_phys_range(unsigned long begin, unsigned long end);
 
-int __weak arch_kexec_kernel_image_probe(struct kimage *image, void *buf,
-					 unsigned long buf_len);
-void * __weak arch_kexec_kernel_image_load(struct kimage *image);
-int __weak arch_kimage_file_post_load_cleanup(struct kimage *image);
-int __weak arch_kexec_kernel_verify_sig(struct kimage *image, void *buf,
-					unsigned long buf_len);
 int __weak arch_kexec_apply_relocations_add(const Elf_Ehdr *ehdr,
 					Elf_Shdr *sechdrs, unsigned int relsec);
 int __weak arch_kexec_apply_relocations(const Elf_Ehdr *ehdr, Elf_Shdr *sechdrs,
