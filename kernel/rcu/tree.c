@@ -1234,10 +1234,10 @@ static int rcu_implicit_dynticks_qs(struct rcu_data *rdp)
 	}
 
 	/*
-	 * Has this CPU encountered a cond_resched_rcu_qs() since the
-	 * beginning of the grace period?  For this to be the case,
-	 * the CPU has to have noticed the current grace period.  This
-	 * might not be the case for nohz_full CPUs looping in the kernel.
+	 * Has this CPU encountered a cond_resched() since the beginning
+	 * of the grace period?  For this to be the case, the CPU has to
+	 * have noticed the current grace period.  This might not be the
+	 * case for nohz_full CPUs looping in the kernel.
 	 */
 	jtsq = jiffies_till_sched_qs;
 	ruqp = per_cpu_ptr(&rcu_dynticks.rcu_urgent_qs, rdp->cpu);
@@ -2049,7 +2049,7 @@ static bool rcu_gp_init(struct rcu_state *rsp)
 					    rnp->level, rnp->grplo,
 					    rnp->grphi, rnp->qsmask);
 		raw_spin_unlock_irq_rcu_node(rnp);
-		cond_resched_rcu_qs();
+		cond_resched_tasks_rcu_qs();
 		WRITE_ONCE(rsp->gp_activity, jiffies);
 	}
 
@@ -2140,7 +2140,8 @@ static void rcu_gp_cleanup(struct rcu_state *rsp)
 	 */
 	rcu_for_each_node_breadth_first(rsp, rnp) {
 		raw_spin_lock_irq_rcu_node(rnp);
-		WARN_ON_ONCE(rcu_preempt_blocked_readers_cgp(rnp));
+		if (WARN_ON_ONCE(rcu_preempt_blocked_readers_cgp(rnp)))
+			dump_blkd_tasks(rnp, 10);
 		WARN_ON_ONCE(rnp->qsmask);
 		WRITE_ONCE(rnp->completed, rsp->gpnum);
 		rdp = this_cpu_ptr(rsp->rda);
@@ -2151,7 +2152,7 @@ static void rcu_gp_cleanup(struct rcu_state *rsp)
 		sq = rcu_nocb_gp_get(rnp);
 		raw_spin_unlock_irq_rcu_node(rnp);
 		rcu_nocb_gp_cleanup(sq);
-		cond_resched_rcu_qs();
+		cond_resched_tasks_rcu_qs();
 		WRITE_ONCE(rsp->gp_activity, jiffies);
 		rcu_gp_slow(rsp, gp_cleanup_delay);
 	}
@@ -2202,7 +2203,7 @@ static int __noreturn rcu_gp_kthread(void *arg)
 			/* Locking provides needed memory barrier. */
 			if (rcu_gp_init(rsp))
 				break;
-			cond_resched_rcu_qs();
+			cond_resched_tasks_rcu_qs();
 			WRITE_ONCE(rsp->gp_activity, jiffies);
 			WARN_ON(signal_pending(current));
 			trace_rcu_grace_period(rsp->name,
@@ -2247,7 +2248,7 @@ static int __noreturn rcu_gp_kthread(void *arg)
 				trace_rcu_grace_period(rsp->name,
 						       READ_ONCE(rsp->gpnum),
 						       TPS("fqsend"));
-				cond_resched_rcu_qs();
+				cond_resched_tasks_rcu_qs();
 				WRITE_ONCE(rsp->gp_activity, jiffies);
 				ret = 0; /* Force full wait till next FQS. */
 				j = jiffies_till_next_fqs;
@@ -2260,7 +2261,7 @@ static int __noreturn rcu_gp_kthread(void *arg)
 				}
 			} else {
 				/* Deal with stray signal. */
-				cond_resched_rcu_qs();
+				cond_resched_tasks_rcu_qs();
 				WRITE_ONCE(rsp->gp_activity, jiffies);
 				WARN_ON(signal_pending(current));
 				trace_rcu_grace_period(rsp->name,
@@ -2411,6 +2412,7 @@ rcu_report_qs_rnp(unsigned long mask, struct rcu_state *rsp,
 			raw_spin_unlock_irqrestore_rcu_node(rnp, flags);
 			return;
 		}
+		rnp->completedqs = rnp->gpnum;
 		mask = rnp->grpmask;
 		if (rnp->parent == NULL) {
 
@@ -2782,7 +2784,7 @@ static void force_qs_rnp(struct rcu_state *rsp, int (*f)(struct rcu_data *rsp))
 	struct rcu_node *rnp;
 
 	rcu_for_each_leaf_node(rsp, rnp) {
-		cond_resched_rcu_qs();
+		cond_resched_tasks_rcu_qs();
 		mask = 0;
 		raw_spin_lock_irqsave_rcu_node(rnp, flags);
 		if (rnp->qsmask == 0) {
@@ -4027,6 +4029,7 @@ static void __init rcu_init_one(struct rcu_state *rsp)
 						   &rcu_fqs_class[i], fqs[i]);
 			rnp->gpnum = rsp->gpnum;
 			rnp->completed = rsp->completed;
+			rnp->completedqs = rsp->completed;
 			rnp->qsmask = 0;
 			rnp->qsmaskinit = 0;
 			rnp->grplo = j * cpustride;
@@ -4168,6 +4171,7 @@ static void __init rcu_dump_rcu_node_tree(struct rcu_state *rsp)
 }
 
 struct workqueue_struct *rcu_gp_wq;
+struct workqueue_struct *rcu_par_gp_wq;
 
 void __init rcu_init(void)
 {
@@ -4199,6 +4203,8 @@ void __init rcu_init(void)
 	/* Create workqueue for expedited GPs and for Tree SRCU. */
 	rcu_gp_wq = alloc_workqueue("rcu_gp", WQ_MEM_RECLAIM, 0);
 	WARN_ON(!rcu_gp_wq);
+	rcu_par_gp_wq = alloc_workqueue("rcu_par_gp", WQ_MEM_RECLAIM, 0);
+	WARN_ON(!rcu_par_gp_wq);
 }
 
 #include "tree_exp.h"

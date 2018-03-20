@@ -260,8 +260,10 @@ static void rcu_preempt_ctxt_queue(struct rcu_node *rnp, struct rcu_data *rdp)
 	 * ->exp_tasks pointers, respectively, to reference the newly
 	 * blocked tasks.
 	 */
-	if (!rnp->gp_tasks && (blkd_state & RCU_GP_BLKD))
+	if (!rnp->gp_tasks && (blkd_state & RCU_GP_BLKD)) {
 		rnp->gp_tasks = &t->rcu_node_entry;
+		WARN_ON_ONCE(rnp->completedqs == rnp->gpnum);
+	}
 	if (!rnp->exp_tasks && (blkd_state & RCU_EXP_BLKD))
 		rnp->exp_tasks = &t->rcu_node_entry;
 	WARN_ON_ONCE(!(blkd_state & RCU_GP_BLKD) !=
@@ -491,6 +493,8 @@ void rcu_read_unlock_special(struct task_struct *t)
 		WARN_ON_ONCE(rnp != t->rcu_blocked_node);
 		WARN_ON_ONCE(rnp->level != rcu_num_lvls - 1);
 		empty_norm = !rcu_preempt_blocked_readers_cgp(rnp);
+		WARN_ON_ONCE(rnp->completedqs == rnp->gpnum &&
+			     (!empty_norm || rnp->qsmask));
 		empty_exp = sync_rcu_preempt_exp_done(rnp);
 		smp_mb(); /* ensure expedited fastpath sees end of RCU c-s. */
 		np = rcu_next_node_entry(t, rnp);
@@ -653,7 +657,8 @@ static void rcu_preempt_check_blocked_tasks(struct rcu_node *rnp)
 	struct task_struct *t;
 
 	RCU_LOCKDEP_WARN(preemptible(), "rcu_preempt_check_blocked_tasks() invoked with preemption enabled!!!\n");
-	WARN_ON_ONCE(rcu_preempt_blocked_readers_cgp(rnp));
+	if (WARN_ON_ONCE(rcu_preempt_blocked_readers_cgp(rnp)))
+		dump_blkd_tasks(rnp, 10);
 	if (rcu_preempt_has_tasks(rnp)) {
 		rnp->gp_tasks = rnp->blkd_tasks.next;
 		t = container_of(rnp->gp_tasks, struct task_struct,
@@ -684,15 +689,6 @@ static void rcu_preempt_check_callbacks(void)
 	    __this_cpu_read(rcu_data_p->cpu_no_qs.b.norm))
 		t->rcu_read_unlock_special.b.need_qs = true;
 }
-
-#ifdef CONFIG_RCU_BOOST
-
-static void rcu_preempt_do_callbacks(void)
-{
-	rcu_do_batch(rcu_state_p, this_cpu_ptr(rcu_data_p));
-}
-
-#endif /* #ifdef CONFIG_RCU_BOOST */
 
 /**
  * call_rcu() - Queue an RCU callback for invocation after a grace period.
@@ -806,6 +802,27 @@ void exit_rcu(void)
 	__rcu_read_unlock();
 }
 
+/*
+ * Dump the blocked-tasks state, but limit the list dump to the
+ * specified number of elements.
+ */
+static void dump_blkd_tasks(struct rcu_node *rnp, int ncheck)
+{
+	int i;
+	struct list_head *lhp;
+
+	lockdep_assert_held(&rnp->lock);
+	pr_info("%s: grp: %d-%d level: %d ->qamask %#lx ->gp_tasks %p ->boost_tasks %p ->exp_tasks %p &->blkd_tasks: %p offset: %u\n", __func__, rnp->grplo, rnp->grphi, rnp->level, rnp->qsmask, rnp->gp_tasks, rnp->boost_tasks, rnp->exp_tasks, &rnp->blkd_tasks, (unsigned int)offsetof(typeof(*rnp), blkd_tasks));
+	pr_cont("\t->blkd_tasks");
+	i = 0;
+	list_for_each(lhp, &rnp->blkd_tasks) {
+		pr_cont(" %p", lhp);
+		if (++i >= 10)
+			break;
+	}
+	pr_cont("\n");
+}
+
 #else /* #ifdef CONFIG_PREEMPT_RCU */
 
 static struct rcu_state *const rcu_state_p = &rcu_sched_state;
@@ -912,6 +929,14 @@ static void __init __rcu_init_preempt(void)
  */
 void exit_rcu(void)
 {
+}
+
+/*
+ * Dump the guaranteed-empty blocked-tasks state.  Trust but verify.
+ */
+static void dump_blkd_tasks(struct rcu_node *rnp, int ncheck)
+{
+	WARN_ON_ONCE(!list_empty(&rnp->blkd_tasks));
 }
 
 #endif /* #else #ifdef CONFIG_PREEMPT_RCU */
@@ -1140,7 +1165,7 @@ static void rcu_kthread_do_work(void)
 {
 	rcu_do_batch(&rcu_sched_state, this_cpu_ptr(&rcu_sched_data));
 	rcu_do_batch(&rcu_bh_state, this_cpu_ptr(&rcu_bh_data));
-	rcu_preempt_do_callbacks();
+	rcu_do_batch(&rcu_preempt_state, this_cpu_ptr(&rcu_preempt_data));
 }
 
 static void rcu_cpu_kthread_setup(unsigned int cpu)
@@ -1607,7 +1632,7 @@ static int rcu_oom_notify(struct notifier_block *self,
 
 	for_each_online_cpu(cpu) {
 		smp_call_function_single(cpu, rcu_oom_notify_cpu, NULL, 1);
-		cond_resched_rcu_qs();
+		cond_resched_tasks_rcu_qs();
 	}
 
 	/* Unconditionally decrement: no need to wake ourselves up. */
@@ -1966,7 +1991,7 @@ static void __call_rcu_nocb_enqueue(struct rcu_data *rdp,
 			trace_rcu_nocb_wake(rdp->rsp->name, rdp->cpu,
 					    TPS("WakeOvf"));
 		} else {
-			wake_nocb_leader_defer(rdp, RCU_NOCB_WAKE,
+			wake_nocb_leader_defer(rdp, RCU_NOCB_WAKE_FORCE,
 					       TPS("WakeOvfIsDeferred"));
 		}
 		rdp->qlen_last_fqs_check = LONG_MAX / 2;
@@ -2236,7 +2261,7 @@ static int rcu_nocb_kthread(void *arg)
 				cl++;
 			c++;
 			local_bh_enable();
-			cond_resched_rcu_qs();
+			cond_resched_tasks_rcu_qs();
 			list = next;
 		}
 		trace_rcu_batch_end(rdp->rsp->name, c, !!list, 0, 0, 1);
@@ -2292,7 +2317,7 @@ static void do_nocb_deferred_wakeup(struct rcu_data *rdp)
 void __init rcu_init_nohz(void)
 {
 	int cpu;
-	bool need_rcu_nocb_mask = true;
+	bool need_rcu_nocb_mask = false;
 	struct rcu_state *rsp;
 
 #if defined(CONFIG_NO_HZ_FULL)
@@ -2315,7 +2340,7 @@ void __init rcu_init_nohz(void)
 #endif /* #if defined(CONFIG_NO_HZ_FULL) */
 
 	if (!cpumask_subset(rcu_nocb_mask, cpu_possible_mask)) {
-		pr_info("\tNote: kernel parameter 'rcu_nocbs=' contains nonexistent CPUs.\n");
+		pr_info("\tNote: kernel parameter 'rcu_nocbs=', 'nohz_full', or 'isolcpus=' contains nonexistent CPUs.\n");
 		cpumask_and(rcu_nocb_mask, cpu_possible_mask,
 			    rcu_nocb_mask);
 	}

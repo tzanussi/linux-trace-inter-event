@@ -58,6 +58,14 @@ struct rcu_dynticks {
 #endif /* #ifdef CONFIG_RCU_FAST_NO_HZ */
 };
 
+/* Communicate arguments to a workqueue handler. */
+struct rcu_exp_work {
+	smp_call_func_t rew_func;
+	struct rcu_state *rew_rsp;
+	unsigned long rew_s;
+	struct work_struct rew_work;
+};
+
 /* RCU's kthread states for tracing. */
 #define RCU_KTHREAD_STOPPED  0
 #define RCU_KTHREAD_RUNNING  1
@@ -79,6 +87,7 @@ struct rcu_node {
 	unsigned long completed; /* Last GP completed for this node. */
 				/*  This will either be equal to or one */
 				/*  behind the root rcu_node's gpnum. */
+	unsigned long completedqs; /* All QSes done for this node. */
 	unsigned long qsmask;	/* CPUs or groups that need to switch in */
 				/*  order for current grace period to proceed.*/
 				/*  In leaf rcu_node, each bit corresponds to */
@@ -157,6 +166,8 @@ struct rcu_node {
 	spinlock_t exp_lock ____cacheline_internodealigned_in_smp;
 	unsigned long exp_seq_rq;
 	wait_queue_head_t exp_wq[4];
+	struct rcu_exp_work rew;
+	bool exp_need_flush;	/* Need to flush workitem? */
 } ____cacheline_internodealigned_in_smp;
 
 /*
@@ -224,10 +235,6 @@ struct rcu_data {
 #ifdef CONFIG_RCU_FAST_NO_HZ
 	struct rcu_head oom_head;
 #endif /* #ifdef CONFIG_RCU_FAST_NO_HZ */
-	atomic_long_t exp_workdone0;	/* # done by workqueue. */
-	atomic_long_t exp_workdone1;	/* # done by others #1. */
-	atomic_long_t exp_workdone2;	/* # done by others #2. */
-	atomic_long_t exp_workdone3;	/* # done by others #3. */
 	int exp_dynticks_snap;		/* Double-check need for IPI. */
 
 	/* 6) Callback offloading. */
@@ -433,12 +440,12 @@ static void rcu_preempt_check_blocked_tasks(struct rcu_node *rnp);
 static void rcu_preempt_check_callbacks(void);
 void call_rcu(struct rcu_head *head, rcu_callback_t func);
 static void __init __rcu_init_preempt(void);
+static void dump_blkd_tasks(struct rcu_node *rnp, int ncheck);
 static void rcu_initiate_boost(struct rcu_node *rnp, unsigned long flags);
 static void rcu_preempt_boost_start_gp(struct rcu_node *rnp);
 static void invoke_rcu_callbacks_kthread(void);
 static bool rcu_is_callbacks_kthread(void);
 #ifdef CONFIG_RCU_BOOST
-static void rcu_preempt_do_callbacks(void);
 static int rcu_spawn_one_boost_kthread(struct rcu_state *rsp,
 						 struct rcu_node *rnp);
 #endif /* #ifdef CONFIG_RCU_BOOST */
