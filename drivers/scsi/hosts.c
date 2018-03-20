@@ -154,7 +154,6 @@ int scsi_host_set_state(struct Scsi_Host *shost, enum scsi_host_state state)
 					     scsi_host_state_name(state)));
 	return -EINVAL;
 }
-EXPORT_SYMBOL(scsi_host_set_state);
 
 /**
  * scsi_remove_host - remove a scsi host
@@ -515,29 +514,6 @@ struct Scsi_Host *scsi_host_alloc(struct scsi_host_template *sht, int privsize)
 	return NULL;
 }
 EXPORT_SYMBOL(scsi_host_alloc);
-
-struct Scsi_Host *scsi_register(struct scsi_host_template *sht, int privsize)
-{
-	struct Scsi_Host *shost = scsi_host_alloc(sht, privsize);
-
-	if (!sht->detect) {
-		printk(KERN_WARNING "scsi_register() called on new-style "
-				    "template for driver %s\n", sht->name);
-		dump_stack();
-	}
-
-	if (shost)
-		list_add_tail(&shost->sht_legacy_list, &sht->legacy_hosts);
-	return shost;
-}
-EXPORT_SYMBOL(scsi_register);
-
-void scsi_unregister(struct Scsi_Host *shost)
-{
-	list_del(&shost->sht_legacy_list);
-	scsi_host_put(shost);
-}
-EXPORT_SYMBOL(scsi_unregister);
 
 static int __scsi_host_match(struct device *dev, const void *data)
 {
