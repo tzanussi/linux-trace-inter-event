@@ -192,7 +192,8 @@ static inline void add_sg_size(struct octeon_sg_entry *sg_entry,
 
 #define   OCTNET_MAX_FRM_SIZE        (16000 + OCTNET_FRM_HEADER_SIZE)
 
-#define   OCTNET_DEFAULT_FRM_SIZE    (1500 + OCTNET_FRM_HEADER_SIZE)
+#define   OCTNET_DEFAULT_MTU         (1500)
+#define   OCTNET_DEFAULT_FRM_SIZE  (OCTNET_DEFAULT_MTU + OCTNET_FRM_HEADER_SIZE)
 
 /** NIC Commands are sent using this Octeon Input Queue */
 #define   OCTNET_CMD_Q                0
@@ -675,9 +676,11 @@ union oct_link_status {
 		u64 if_mode:5;
 		u64 pause:1;
 		u64 flashing:1;
-		u64 reserved:15;
+		u64 phy_type:5;
+		u64 reserved:10;
 #else
-		u64 reserved:15;
+		u64 reserved:10;
+		u64 phy_type:5;
 		u64 flashing:1;
 		u64 pause:1;
 		u64 if_mode:5;
@@ -688,6 +691,12 @@ union oct_link_status {
 		u64 duplex:8;
 #endif
 	} s;
+};
+
+enum lio_phy_type {
+	LIO_PHY_PORT_TP = 0x0,
+	LIO_PHY_PORT_FIBRE = 0x1,
+	LIO_PHY_PORT_UNKNOWN,
 };
 
 /** The txpciq info passed to host from the firmware */

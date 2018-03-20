@@ -2339,6 +2339,32 @@ out:
 	resource->size_valid = size_valid;
 }
 
+static int
+devlink_resource_validate_size(struct devlink_resource *resource, u64 size,
+			       struct netlink_ext_ack *extack)
+{
+	u64 reminder;
+	int err = 0;
+
+	if (size > resource->size_params.size_max) {
+		NL_SET_ERR_MSG_MOD(extack, "Size larger than maximum");
+		err = -EINVAL;
+	}
+
+	if (size < resource->size_params.size_min) {
+		NL_SET_ERR_MSG_MOD(extack, "Size smaller than minimum");
+		err = -EINVAL;
+	}
+
+	div64_u64_rem(size, resource->size_params.size_granularity, &reminder);
+	if (reminder) {
+		NL_SET_ERR_MSG_MOD(extack, "Wrong granularity");
+		err = -EINVAL;
+	}
+
+	return err;
+}
+
 static int devlink_nl_cmd_resource_set(struct sk_buff *skb,
 				       struct genl_info *info)
 {
@@ -2357,12 +2383,8 @@ static int devlink_nl_cmd_resource_set(struct sk_buff *skb,
 	if (!resource)
 		return -EINVAL;
 
-	if (!resource->resource_ops->size_validate)
-		return -EINVAL;
-
 	size = nla_get_u64(info->attrs[DEVLINK_ATTR_RESOURCE_SIZE]);
-	err = resource->resource_ops->size_validate(devlink, size,
-						    info->extack);
+	err = devlink_resource_validate_size(resource, size, info->extack);
 	if (err)
 		return err;
 
@@ -2722,22 +2744,22 @@ static const struct genl_ops devlink_nl_ops[] = {
 		.cmd = DEVLINK_CMD_DPIPE_TABLE_GET,
 		.doit = devlink_nl_cmd_dpipe_table_get,
 		.policy = devlink_nl_policy,
-		.flags = GENL_ADMIN_PERM,
 		.internal_flags = DEVLINK_NL_FLAG_NEED_DEVLINK,
+		/* can be retrieved by unprivileged users */
 	},
 	{
 		.cmd = DEVLINK_CMD_DPIPE_ENTRIES_GET,
 		.doit = devlink_nl_cmd_dpipe_entries_get,
 		.policy = devlink_nl_policy,
-		.flags = GENL_ADMIN_PERM,
 		.internal_flags = DEVLINK_NL_FLAG_NEED_DEVLINK,
+		/* can be retrieved by unprivileged users */
 	},
 	{
 		.cmd = DEVLINK_CMD_DPIPE_HEADERS_GET,
 		.doit = devlink_nl_cmd_dpipe_headers_get,
 		.policy = devlink_nl_policy,
-		.flags = GENL_ADMIN_PERM,
 		.internal_flags = DEVLINK_NL_FLAG_NEED_DEVLINK,
+		/* can be retrieved by unprivileged users */
 	},
 	{
 		.cmd = DEVLINK_CMD_DPIPE_TABLE_COUNTERS_SET,
@@ -2757,8 +2779,8 @@ static const struct genl_ops devlink_nl_ops[] = {
 		.cmd = DEVLINK_CMD_RESOURCE_DUMP,
 		.doit = devlink_nl_cmd_resource_dump,
 		.policy = devlink_nl_policy,
-		.flags = GENL_ADMIN_PERM,
 		.internal_flags = DEVLINK_NL_FLAG_NEED_DEVLINK,
+		/* can be retrieved by unprivileged users */
 	},
 	{
 		.cmd = DEVLINK_CMD_RELOAD,

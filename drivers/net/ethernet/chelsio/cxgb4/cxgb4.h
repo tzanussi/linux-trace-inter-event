@@ -831,6 +831,16 @@ struct vf_info {
 	u16 vlan;
 };
 
+enum {
+	HMA_DMA_MAPPED_FLAG = 1
+};
+
+struct hma_data {
+	unsigned char flags;
+	struct sg_table *sgt;
+	dma_addr_t *phy_addr;	/* physical address of the page */
+};
+
 struct mbox_list {
 	struct list_head list;
 };
@@ -907,6 +917,7 @@ struct adapter {
 	struct work_struct tid_release_task;
 	struct work_struct db_full_task;
 	struct work_struct db_drop_task;
+	struct work_struct fatal_err_notify_task;
 	bool tid_release_task_busy;
 
 	/* lock for mailbox cmd list */
@@ -946,6 +957,9 @@ struct adapter {
 
 	/* Ethtool Dump */
 	struct ethtool_dump eth_dump;
+
+	/* HMA */
+	struct hma_data hma;
 };
 
 /* Support for "sched-class" command to allow a TX Scheduling Class to be
@@ -1488,6 +1502,11 @@ u32 t4_read_pcie_cfg4(struct adapter *adap, int reg);
 u32 t4_get_util_window(struct adapter *adap);
 void t4_setup_memwin(struct adapter *adap, u32 memwin_base, u32 window);
 
+int t4_memory_rw_init(struct adapter *adap, int win, int mtype, u32 *mem_off,
+		      u32 *mem_base, u32 *mem_aperture);
+void t4_memory_update_win(struct adapter *adap, int win, u32 addr);
+void t4_memory_rw_residual(struct adapter *adap, u32 off, u32 addr, u8 *buf,
+			   int dir);
 #define T4_MEMORY_WRITE	0
 #define T4_MEMORY_READ	1
 int t4_memory_rw(struct adapter *adap, int win, int mtype, u32 addr, u32 len,

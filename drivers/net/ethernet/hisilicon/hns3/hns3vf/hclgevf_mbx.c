@@ -54,6 +54,10 @@ static int hclgevf_get_mbx_resp(struct hclgevf_dev *hdev, u16 code0, u16 code1,
 	mbx_resp = &hdev->mbx_resp;
 	r_code0 = (u16)(mbx_resp->origin_mbx_msg >> 16);
 	r_code1 = (u16)(mbx_resp->origin_mbx_msg & 0xff);
+
+	if (mbx_resp->resp_status)
+		return mbx_resp->resp_status;
+
 	if (resp_data)
 		memcpy(resp_data, &mbx_resp->additional_info[0], resp_len);
 
@@ -171,6 +175,7 @@ void hclgevf_mbx_handler(struct hclgevf_dev *hdev)
 				req->msg[0]);
 			break;
 		}
+		crq->desc[crq->next_to_use].flag = 0;
 		hclge_mbx_ring_ptr_move_crq(crq);
 		flag = le16_to_cpu(crq->desc[crq->next_to_use].flag);
 	}
