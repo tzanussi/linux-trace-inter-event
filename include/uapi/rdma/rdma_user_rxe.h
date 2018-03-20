@@ -35,6 +35,9 @@
 #define RDMA_USER_RXE_H
 
 #include <linux/types.h>
+#include <linux/socket.h>
+#include <linux/in.h>
+#include <linux/in6.h>
 
 union rxe_gid {
 	__u8	raw[16];
@@ -57,7 +60,6 @@ struct rxe_av {
 	__u8			network_type;
 	struct rxe_global_route	grh;
 	union {
-		struct sockaddr		_sockaddr;
 		struct sockaddr_in	_sockaddr_in;
 		struct sockaddr_in6	_sockaddr_in6;
 	} sgid_addr, dgid_addr;
@@ -140,6 +142,28 @@ struct rxe_recv_wqe {
 	__u32			num_sge;
 	__u32			padding;
 	struct rxe_dma_info	dma;
+};
+
+struct rxe_create_cq_resp {
+	struct mminfo mi;
+};
+
+struct rxe_resize_cq_resp {
+	struct mminfo mi;
+};
+
+struct rxe_create_qp_resp {
+	struct mminfo rq_mi;
+	struct mminfo sq_mi;
+};
+
+struct rxe_create_srq_resp {
+	struct mminfo mi;
+	__u32 srq_num;
+};
+
+struct rxe_modify_srq_cmd {
+	__u64 mmap_info_addr;
 };
 
 #endif /* RDMA_USER_RXE_H */

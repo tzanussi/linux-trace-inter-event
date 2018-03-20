@@ -693,6 +693,8 @@ ssize_t ib_uverbs_reg_mr(struct ib_uverbs_file *file,
 	mr->pd      = pd;
 	mr->uobject = uobj;
 	atomic_inc(&pd->usecnt);
+	mr->res.type = RDMA_RESTRACK_MR;
+	rdma_restrack_add(&mr->res);
 
 	uobj->object = mr;
 
@@ -1985,6 +1987,13 @@ static int modify_qp(struct ib_uverbs_file *file,
 	if ((cmd->base.attr_mask & IB_QP_ALT_PATH) &&
 	    (!rdma_is_port_valid(qp->device, cmd->base.alt_port_num) ||
 	    !rdma_is_port_valid(qp->device, cmd->base.alt_dest.port_num))) {
+		ret = -EINVAL;
+		goto release_qp;
+	}
+
+	if ((cmd->base.attr_mask & IB_QP_CUR_STATE &&
+	    cmd->base.cur_qp_state > IB_QPS_ERR) ||
+	    cmd->base.qp_state > IB_QPS_ERR) {
 		ret = -EINVAL;
 		goto release_qp;
 	}

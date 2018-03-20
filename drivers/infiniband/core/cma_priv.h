@@ -1,5 +1,8 @@
 /*
- * Copyright (c) 2017 Mellanox Technologies. All rights reserved.
+ * Copyright (c) 2005 Voltaire Inc.  All rights reserved.
+ * Copyright (c) 2002-2005, Network Appliance, Inc. All rights reserved.
+ * Copyright (c) 1999-2005, Mellanox Technologies, Inc. All rights reserved.
+ * Copyright (c) 2005-2006 Intel Corporation.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -28,33 +31,53 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
  */
 
-#ifndef __MLX5E_IPSEC_RXTX_H__
-#define __MLX5E_IPSEC_RXTX_H__
+#ifndef _CMA_PRIV_H
+#define _CMA_PRIV_H
 
-#ifdef CONFIG_MLX5_EN_IPSEC
+struct rdma_id_private {
+	struct rdma_cm_id	id;
 
-#include <linux/skbuff.h>
-#include <net/xfrm.h>
-#include "en.h"
+	struct rdma_bind_list	*bind_list;
+	struct hlist_node	node;
+	struct list_head	list; /* listen_any_list or cma_device.list */
+	struct list_head	listen_list; /* per device listens */
+	struct cma_device	*cma_dev;
+	struct list_head	mc_list;
 
-struct sk_buff *mlx5e_ipsec_handle_rx_skb(struct net_device *netdev,
-					  struct sk_buff *skb);
-void mlx5e_ipsec_handle_rx_cqe(struct mlx5e_rq *rq, struct mlx5_cqe64 *cqe);
+	int			internal_id;
+	enum rdma_cm_state	state;
+	spinlock_t		lock;
+	struct mutex		qp_mutex;
 
-void mlx5e_ipsec_inverse_table_init(void);
-bool mlx5e_ipsec_feature_check(struct sk_buff *skb, struct net_device *netdev,
-			       netdev_features_t features);
-void mlx5e_ipsec_set_iv_esn(struct sk_buff *skb, struct xfrm_state *x,
-			    struct xfrm_offload *xo);
-void mlx5e_ipsec_set_iv(struct sk_buff *skb, struct xfrm_state *x,
-			struct xfrm_offload *xo);
-struct sk_buff *mlx5e_ipsec_handle_tx_skb(struct net_device *netdev,
-					  struct mlx5e_tx_wqe *wqe,
-					  struct sk_buff *skb);
+	struct completion	comp;
+	atomic_t		refcount;
+	struct mutex		handler_mutex;
 
-#endif /* CONFIG_MLX5_EN_IPSEC */
+	int			backlog;
+	int			timeout_ms;
+	struct ib_sa_query	*query;
+	int			query_id;
+	union {
+		struct ib_cm_id	*ib;
+		struct iw_cm_id	*iw;
+	} cm_id;
 
-#endif /* __MLX5E_IPSEC_RXTX_H__ */
+	u32			seq_num;
+	u32			qkey;
+	u32			qp_num;
+	u32			options;
+	u8			srq;
+	u8			tos;
+	bool			tos_set;
+	u8			reuseaddr;
+	u8			afonly;
+	enum ib_gid_type	gid_type;
+
+	/*
+	 * Internal to RDMA/core, don't use in the drivers
+	 */
+	struct rdma_restrack_entry     res;
+};
+#endif /* _CMA_PRIV_H */

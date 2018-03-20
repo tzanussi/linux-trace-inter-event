@@ -100,6 +100,7 @@ static int hns_roce_del_gid(struct ib_device *device, u8 port_num,
 			    unsigned int index, void **context)
 {
 	struct hns_roce_dev *hr_dev = to_hr_dev(device);
+	struct ib_gid_attr zattr = { };
 	union ib_gid zgid = { {0} };
 	u8 port = port_num - 1;
 	unsigned long flags;
@@ -110,7 +111,7 @@ static int hns_roce_del_gid(struct ib_device *device, u8 port_num,
 
 	spin_lock_irqsave(&hr_dev->iboe.lock, flags);
 
-	ret = hr_dev->hw->set_gid(hr_dev, port, index, &zgid, NULL);
+	ret = hr_dev->hw->set_gid(hr_dev, port, index, &zgid, &zattr);
 
 	spin_unlock_irqrestore(&hr_dev->iboe.lock, flags);
 
@@ -349,6 +350,11 @@ static struct ib_ucontext *hns_roce_alloc_ucontext(struct ib_device *ib_dev,
 	ret = hns_roce_uar_alloc(hr_dev, &context->uar);
 	if (ret)
 		goto error_fail_uar_alloc;
+
+	if (hr_dev->caps.flags & HNS_ROCE_CAP_FLAG_RECORD_DB) {
+		INIT_LIST_HEAD(&context->page_list);
+		mutex_init(&context->page_mutex);
+	}
 
 	ret = ib_copy_to_udata(udata, &resp, sizeof(resp));
 	if (ret)
@@ -658,6 +664,11 @@ static int hns_roce_setup_hca(struct hns_roce_dev *hr_dev)
 
 	spin_lock_init(&hr_dev->sm_lock);
 	spin_lock_init(&hr_dev->bt_cmd_lock);
+
+	if (hr_dev->caps.flags & HNS_ROCE_CAP_FLAG_RECORD_DB) {
+		INIT_LIST_HEAD(&hr_dev->pgdir_list);
+		mutex_init(&hr_dev->pgdir_mutex);
+	}
 
 	ret = hns_roce_init_uar_table(hr_dev);
 	if (ret) {

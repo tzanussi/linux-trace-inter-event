@@ -462,13 +462,31 @@ static int cm_init_av_for_response(struct cm_port *port, struct ib_wc *wc,
 				       grh, &av->ah_attr);
 }
 
-static int cm_init_av_by_path(struct sa_path_rec *path, struct cm_av *av,
-			      struct cm_id_private *cm_id_priv)
+static int add_cm_id_to_port_list(struct cm_id_private *cm_id_priv,
+				  struct cm_av *av,
+				  struct cm_port *port)
+{
+	unsigned long flags;
+	int ret = 0;
+
+	spin_lock_irqsave(&cm.lock, flags);
+
+	if (&cm_id_priv->av == av)
+		list_add_tail(&cm_id_priv->prim_list, &port->cm_priv_prim_list);
+	else if (&cm_id_priv->alt_av == av)
+		list_add_tail(&cm_id_priv->altr_list, &port->cm_priv_altr_list);
+	else
+		ret = -EINVAL;
+
+	spin_unlock_irqrestore(&cm.lock, flags);
+	return ret;
+}
+
+static struct cm_port *get_cm_port_from_path(struct sa_path_rec *path)
 {
 	struct cm_device *cm_dev;
 	struct cm_port *port = NULL;
 	unsigned long flags;
-	int ret;
 	u8 p;
 	struct net_device *ndev = ib_get_ndev_from_path(path);
 
@@ -477,7 +495,7 @@ static int cm_init_av_by_path(struct sa_path_rec *path, struct cm_av *av,
 		if (!ib_find_cached_gid(cm_dev->ib_device, &path->sgid,
 					sa_conv_pathrec_to_gid_type(path),
 					ndev, &p, NULL)) {
-			port = cm_dev->port[p-1];
+			port = cm_dev->port[p - 1];
 			break;
 		}
 	}
@@ -485,9 +503,20 @@ static int cm_init_av_by_path(struct sa_path_rec *path, struct cm_av *av,
 
 	if (ndev)
 		dev_put(ndev);
+	return port;
+}
 
+static int cm_init_av_by_path(struct sa_path_rec *path, struct cm_av *av,
+			      struct cm_id_private *cm_id_priv)
+{
+	struct cm_device *cm_dev;
+	struct cm_port *port;
+	int ret;
+
+	port = get_cm_port_from_path(path);
 	if (!port)
 		return -EINVAL;
+	cm_dev = port->cm_dev;
 
 	ret = ib_find_cached_pkey(cm_dev->ib_device, port->port_num,
 				  be16_to_cpu(path->pkey), &av->pkey_index);
@@ -502,16 +531,7 @@ static int cm_init_av_by_path(struct sa_path_rec *path, struct cm_av *av,
 
 	av->timeout = path->packet_life_time + 1;
 
-	spin_lock_irqsave(&cm.lock, flags);
-	if (&cm_id_priv->av == av)
-		list_add_tail(&cm_id_priv->prim_list, &port->cm_priv_prim_list);
-	else if (&cm_id_priv->alt_av == av)
-		list_add_tail(&cm_id_priv->altr_list, &port->cm_priv_altr_list);
-	else
-		ret = -EINVAL;
-
-	spin_unlock_irqrestore(&cm.lock, flags);
-
+	ret = add_cm_id_to_port_list(cm_id_priv, av, port);
 	return ret;
 }
 
