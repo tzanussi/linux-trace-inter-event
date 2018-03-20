@@ -1,20 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * cec-adap.c - HDMI Consumer Electronics Control framework - CEC adapter
  *
  * Copyright 2016 Cisco Systems, Inc. and/or its affiliates. All rights reserved.
- *
- * This program is free software; you may redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; version 2 of the License.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
  */
 
 #include <linux/errno.h>
@@ -711,16 +699,31 @@ int cec_transmit_msg_fh(struct cec_adapter *adap, struct cec_msg *msg,
 	else
 		msg->flags = 0;
 
+	if (msg->len > 1 && msg->msg[1] == CEC_MSG_CDC_MESSAGE) {
+		msg->msg[2] = adap->phys_addr >> 8;
+		msg->msg[3] = adap->phys_addr & 0xff;
+	}
+
 	/* Sanity checks */
 	if (msg->len == 0 || msg->len > CEC_MAX_MSG_SIZE) {
 		dprintk(1, "%s: invalid length %d\n", __func__, msg->len);
 		return -EINVAL;
 	}
+
+	memset(msg->msg + msg->len, 0, sizeof(msg->msg) - msg->len);
+
+	if (msg->timeout)
+		dprintk(2, "%s: %*ph (wait for 0x%02x%s)\n",
+			__func__, msg->len, msg->msg, msg->reply,
+			!block ? ", nb" : "");
+	else
+		dprintk(2, "%s: %*ph%s\n",
+			__func__, msg->len, msg->msg, !block ? " (nb)" : "");
+
 	if (msg->timeout && msg->len == 1) {
-		dprintk(1, "%s: can't reply for poll msg\n", __func__);
+		dprintk(1, "%s: can't reply to poll msg\n", __func__);
 		return -EINVAL;
 	}
-	memset(msg->msg + msg->len, 0, sizeof(msg->msg) - msg->len);
 	if (msg->len == 1) {
 		if (cec_msg_destination(msg) == 0xf) {
 			dprintk(1, "%s: invalid poll message\n", __func__);
@@ -779,19 +782,6 @@ int cec_transmit_msg_fh(struct cec_adapter *adap, struct cec_msg *msg,
 	msg->sequence = ++adap->sequence;
 	if (!msg->sequence)
 		msg->sequence = ++adap->sequence;
-
-	if (msg->len > 1 && msg->msg[1] == CEC_MSG_CDC_MESSAGE) {
-		msg->msg[2] = adap->phys_addr >> 8;
-		msg->msg[3] = adap->phys_addr & 0xff;
-	}
-
-	if (msg->timeout)
-		dprintk(2, "%s: %*ph (wait for 0x%02x%s)\n",
-			__func__, msg->len, msg->msg, msg->reply,
-			!block ? ", nb" : "");
-	else
-		dprintk(2, "%s: %*ph%s\n",
-			__func__, msg->len, msg->msg, !block ? " (nb)" : "");
 
 	data->msg = *msg;
 	data->fh = fh;
