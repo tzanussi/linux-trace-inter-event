@@ -754,6 +754,12 @@ struct kvm_hv {
 	u64 hv_crash_ctl;
 
 	HV_REFERENCE_TSC_PAGE tsc_ref;
+
+	struct idr conn_to_evt;
+
+	u64 hv_reenlightenment_control;
+	u64 hv_tsc_emulation_control;
+	u64 hv_tsc_emulation_status;
 };
 
 enum kvm_irqchip_mode {
@@ -1187,6 +1193,8 @@ enum emulation_result {
 #define EMULTYPE_SKIP		    (1 << 2)
 #define EMULTYPE_RETRY		    (1 << 3)
 #define EMULTYPE_NO_REEXECUTE	    (1 << 4)
+#define EMULTYPE_NO_UD_ON_FAIL	    (1 << 5)
+#define EMULTYPE_VMWARE		    (1 << 6)
 int x86_emulate_instruction(struct kvm_vcpu *vcpu, unsigned long cr2,
 			    int emulation_type, void *insn, int insn_len);
 
@@ -1204,8 +1212,7 @@ int kvm_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr);
 
 struct x86_emulate_ctxt;
 
-int kvm_fast_pio_out(struct kvm_vcpu *vcpu, int size, unsigned short port);
-int kvm_fast_pio_in(struct kvm_vcpu *vcpu, int size, unsigned short port);
+int kvm_fast_pio(struct kvm_vcpu *vcpu, int size, unsigned short port, int in);
 int kvm_emulate_cpuid(struct kvm_vcpu *vcpu);
 int kvm_emulate_halt(struct kvm_vcpu *vcpu);
 int kvm_vcpu_halt(struct kvm_vcpu *vcpu);
