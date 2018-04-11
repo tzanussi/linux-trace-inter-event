@@ -1668,6 +1668,164 @@ ftrace_event_pid_write(struct file *filp, const char __user *ubuf,
 	return ret;
 }
 
+#define EVENT_LOG_ERRS_MAX	(PAGE_SIZE / sizeof(struct event_log_err))
+#define EVENT_ERR_LOG_MASK	(EVENT_LOG_ERRS_MAX - 1)
+
+struct event_log_err {
+	char			err[MAX_FILTER_STR_VAL];
+	char			cmd[MAX_FILTER_STR_VAL];
+};
+
+static char *event_err_log;
+static unsigned int event_err_log_tail;
+
+struct event_log_err *get_event_log_err(void)
+{
+	struct event_log_err *err;
+	char *errpos;
+
+	if (!event_err_log) {
+		event_err_log = (char *)get_zeroed_page(GFP_KERNEL);
+		if (!event_err_log)
+			return NULL;
+	}
+
+	errpos = event_err_log + event_err_log_tail * sizeof(*err);
+	err = (struct event_log_err *)errpos;
+
+	event_err_log_tail = (event_err_log_tail + 1) & EVENT_ERR_LOG_MASK;
+
+	return err;
+}
+
+/**
+ * event_log_err - write an error to the trace event error log
+ * @loc: A string describing where the error occurred
+ * @cmd: The trace event command that caused the error
+ * @fmt: snprintf format string
+ * @...: variable length list of snprintf args
+ *
+ * Writes an error into tracing/events/error_log of the form:
+ *
+ * ERROR(<loc>): <error text ala snprintf>
+ *   Command: <command that caused the error>
+ *
+ * tracing/events/error_log is a small log file containing the last
+ * EVENT_LOG_ERRS_MAX errors (8).  Memory for the error log isn't
+ * allocated unless there has been a trace event error, and the error
+ * log can be cleared and have its memory freed by writing the empty
+ * string in truncation mode to it i.e. echo > error_log.
+ *
+ * Must be called with event_mutex held.
+ */
+void event_log_err(const char *loc, const char *cmd, const char *fmt, ...)
+{
+	struct event_log_err *err;
+	va_list args;
+	int len;
+
+	err = get_event_log_err();
+	if (!err)
+		return;
+
+	snprintf(err->cmd, MAX_FILTER_STR_VAL,"\n  Command: %s\n", cmd);
+
+	len = snprintf(err->err, MAX_FILTER_STR_VAL, "ERROR(%s): ", loc);
+	if (len >= MAX_FILTER_STR_VAL)
+		return;
+
+	va_start(args, fmt);
+	vsnprintf(err->err + len, MAX_FILTER_STR_VAL - len, fmt, args);
+	va_end(args);
+}
+
+static void clear_event_err_log(void)
+{
+	free_page((long unsigned int)event_err_log);
+	event_err_log_tail = 0;
+	event_err_log = NULL;
+}
+
+static void *event_err_log_inc(loff_t *pos)
+{
+	struct event_log_err *err = NULL;
+	char *errpos = NULL;
+	int i = *pos;
+
+	++*pos;
+
+	if (i >= EVENT_LOG_ERRS_MAX)
+		return NULL;
+
+	i += event_err_log_tail;
+	i &= EVENT_ERR_LOG_MASK;
+
+	errpos = event_err_log + (i * sizeof(*err));
+	err = (struct event_log_err *)errpos;
+
+	return err;
+}
+
+static void *event_err_log_seq_start(struct seq_file *m, loff_t *pos)
+{
+	mutex_lock(&event_mutex);
+
+	return event_err_log_inc(pos);
+}
+
+static void *event_err_log_seq_next(struct seq_file *m, void *v, loff_t *pos)
+{
+	return event_err_log_inc(pos);
+}
+
+static void event_err_log_seq_stop(struct seq_file *m, void *v)
+{
+	mutex_unlock(&event_mutex);
+}
+
+static int event_err_log_seq_show(struct seq_file *m, void *v)
+{
+	struct event_log_err *err = v;
+
+	if (err)
+		seq_printf(m, "%s%s", err->err, err->cmd);
+
+	return 0;
+}
+
+static const struct seq_operations event_err_log_seq_op = {
+	.start  = event_err_log_seq_start,
+	.next   = event_err_log_seq_next,
+	.stop   = event_err_log_seq_stop,
+	.show   = event_err_log_seq_show
+};
+
+static int event_err_log_open(struct inode *inode, struct file *file)
+{
+	if (file->f_mode & FMODE_WRITE) {
+		if (file->f_flags & O_TRUNC)
+			return 0;
+		else
+			return -EINVAL;
+	}
+
+	return seq_open(file, &event_err_log_seq_op);
+}
+
+static ssize_t event_err_log_write(struct file *file,
+				   const char __user *buffer,
+				   size_t count, loff_t *ppos)
+{
+	if (count == 1)
+		clear_event_err_log();
+	else
+		return -EINVAL;
+
+	*ppos += count;
+
+	return count;
+}
+
 static int ftrace_event_avail_open(struct inode *inode, struct file *file);
 static int ftrace_event_set_open(struct inode *inode, struct file *file);
 static int ftrace_event_set_pid_open(struct inode *inode, struct file *file);
@@ -1765,6 +1923,13 @@ static const struct file_operations ftrace_tr_enable_fops = {
 	.write = system_enable_write,
 	.llseek = default_llseek,
 	.release = subsystem_release,
+};
+
+static const struct file_operations ftrace_event_err_log_fops = {
+	.open           = event_err_log_open,
+	.write		= event_err_log_write,
+	.read           = seq_read,
+	.llseek         = seq_lseek,
 };
 
 static const struct file_operations ftrace_show_header_fops = {
@@ -2924,6 +3089,13 @@ create_event_toplevel_files(struct dentry *parent, struct trace_array *tr)
 				  tr, &ftrace_tr_enable_fops);
 	if (!entry) {
 		pr_warn("Could not create tracefs 'enable' entry\n");
+		return -ENOMEM;
+	}
+
+	entry = trace_create_file("error_log", 0644, d_events,
+				  tr, &ftrace_event_err_log_fops);
+	if (!entry) {
+		pr_warn("Could not create tracefs 'error_log' entry\n");
 		return -ENOMEM;
 	}
 
