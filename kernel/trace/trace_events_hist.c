@@ -354,14 +354,32 @@ struct action_data {
 
 
 static char last_hist_cmd[MAX_FILTER_STR_VAL];
+static char last_hist_cmd_event[MAX_FILTER_STR_VAL];
 static char hist_err_str[MAX_FILTER_STR_VAL];
 
-static void last_cmd_set(char *str)
+static void last_cmd_set(struct trace_event_file *file, char *str)
 {
+	const char *system = NULL, *name = NULL;
+	struct trace_event_call *call;
+
 	if (!str)
 		return;
 
 	strncpy(last_hist_cmd, str, MAX_FILTER_STR_VAL - 1);
+
+	if (file) {
+		call = file->event_call;
+
+		system = call->class->system;
+		if (system) {
+			name = trace_event_name(call);
+			if (!name)
+				system = NULL;
+		}
+	}
+
+	if (system)
+		snprintf(last_hist_cmd_event, MAX_FILTER_STR_VAL, "%s:%s", system, name);
 }
 
 static void hist_err(char *str, char *var)
@@ -401,6 +419,8 @@ static void hist_err_event(char *str, char *system, char *event, char *var)
 static void hist_err_clear(void)
 {
 	hist_err_str[0] = '\0';
+	last_hist_cmd[0] = '\0';
+	last_hist_cmd_event[0] = '\0';
 }
 
 static bool have_hist_err(void)
@@ -5478,8 +5498,8 @@ static int event_hist_trigger_func(struct event_command *cmd_ops,
 	int ret = 0;
 
 	if (glob && strlen(glob)) {
-		last_cmd_set(param);
 		hist_err_clear();
+		last_cmd_set(file, param);
 	}
 
 	if (!param)
