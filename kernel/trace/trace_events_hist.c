@@ -2461,6 +2461,7 @@ parse_field(struct hist_trigger_data *hist_data, struct trace_event_file *file,
 		else if (strcmp(modifier, "usecs") == 0)
 			*flags |= HIST_FIELD_FL_TIMESTAMP_USECS;
 		else {
+			log_err("Invalid field modifier: %s", modifier);
 			field = ERR_PTR(-EINVAL);
 			goto out;
 		}
@@ -2476,6 +2477,7 @@ parse_field(struct hist_trigger_data *hist_data, struct trace_event_file *file,
 	else {
 		field = trace_find_event_field(file->event_call, field_name);
 		if (!field || !field->size) {
+			log_err("Couldn't find field: %s", field_name);
 			field = ERR_PTR(-EINVAL);
 			goto out;
 		}
@@ -2552,6 +2554,11 @@ static struct hist_field *parse_atom(struct hist_trigger_data *hist_data,
 		}
 	} else
 		str = s;
+
+	if (is_var_ref(str)) {
+		ret = -EINVAL;
+		goto out;
+	}
 
 	field = parse_field(hist_data, file, str, flags);
 	if (IS_ERR(field)) {
